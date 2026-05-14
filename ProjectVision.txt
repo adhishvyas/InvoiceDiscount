@@ -1,0 +1,13 @@
+I want to create a smart contract application on the Stellar blockchain. The idea is to show the power of blockchains with respect to invoice payments.
+
+Normally, invoices are paid to the seller net-30 or net-60. This means that the seller gets paid 30 or 60 days after the invoice date. Occassionally, sellers require their funds earlier than the 30 or 60 days of the invoice payment. To get their payment sooner, the seller would offer a discount to the buyer. For example, a seller might provide a 10% discount if the buyer paid the invoice in 15 days instead of 30. Often, the buyer is willing to pay early but is not inventivized to do so. Getting a discount on the invoice amount might be sufficient to get the buyer to pay earlier. Typically these negotiations are done via email or over the phone. This takes up time and effort from both the buyer and the seller. 
+
+With the advent of blockchains, stablecoins and smart contracts, this process can be automated. The amounts of discount and when the payment should be made can be codified into a smart contract. At the time of invoice creation, a smart contract can be deployed on the blockchain which, for example could codify that, for a net-60 invoice, either party can trigger an early payment, before 30 days of the due date and get a 15% discount. Either party could trigger an early payment after 30 days but before 45 days of the due date and get  10% discount. The smart contract could codify a number of discount dates and time periods. At the beginning of the time, the buyer could lock funds into this smart contract and either party could trigger early payment, or payment on the due date. This way, the seller is guaranteed the payment and the buyer and seller can both take advantage of the invoice discounting discussed above.
+
+There will be a web front end that can be used to deploy these contracts where both the buyers and sellers can transact. This is to be a proof of concept, that will use a blockchain test network and test network stablecoins as the payment instrument.
+
+We want to deploy this on the Steller blockchain, using PYUSD as the stablecoin that is used for payment. What is the best way to implement this?
+
+
+1st Contract: CCC7N6L73L76UGKG63G3B5ILYBRC5APDDTPHCSVYRFCFLZBSP4FVRMY3
+2nd Contract: CCE7QBXBVOTOPOMSQPZ6VU3UFZ44Y4ECKHUJPRYLGS5S3APGBXJIDIOE

@@ -63,7 +63,12 @@ Write all plans that you are asked to create in the claude-plans/ folder
 
 ## Project Overview
 
-InvoiceDiscount is an invoice discounting smart contract project. The codebase is in early setup — no toolchain or source files exist yet.
+InvoiceDiscount is an invoice discounting smart contract project, implemented separately per blockchain. Each chain lives in its own self-contained top-level folder (contracts, frontend, docs, toolchain); nothing is shared between chains, since they may support different features.
+
+- `stellar/` — Soroban (Rust) contract workspace, React frontend, docs
+- `tempo/` — Tempo implementation (in progress)
+
+Shared at the root: `ProjectVision.txt`, `README.md`, `claude-plans/`.
 
 ## Architecture
 

@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import {ITIP20} from "tempo-std/interfaces/ITIP20.sol";
+import {StdPrecompiles} from "tempo-std/StdPrecompiles.sol";
+
 /// @notice Lifecycle state of an invoice.
 enum Status {
     Active, // created, not yet funded
@@ -70,6 +73,9 @@ contract InvoiceEscrow {
     );
     event Cancelled(address indexed caller, uint128 refunded);
 
+    uint256 private constant MAX_TIERS = 10;
+    uint256 private constant BPS_DENOMINATOR = 10_000;
+
     // ───────────────────────────── Storage ────────────────────────────
     /// @notice The factory allowed to call `initialize`. Set to `msg.sender` (the factory) by the constructor.
     address public immutable factory;
@@ -90,9 +96,10 @@ contract InvoiceEscrow {
     // ─────────────────────────── Constructor ──────────────────────────
     /// @notice Runs once, when the factory deploys the implementation.
     /// @dev Final behaviour: `factory = msg.sender` and the implementation is marked initialised, so nobody
-    ///      can initialise the implementation itself. (Stub: leaves `factory` as address(0).)
+    ///      can initialise the implementation itself.
     constructor() {
-        factory = address(0);
+        factory = msg.sender;
+        _initialized = true;
     }
 
     // ───────────────────────────── Writes ─────────────────────────────
@@ -130,7 +137,33 @@ contract InvoiceEscrow {
         DiscountTier[] calldata tiers,
         address payoutAddress
     ) external {
-        revert("unimplemented");
+        if (msg.sender != factory) revert NotFactory();
+        if (_initialized) revert AlreadyInitialized();
+        if (invoiceRef == bytes32(0)) revert EmptyInvoiceRef();
+        if (principal == 0) revert InvalidPrincipal();
+        if (dueDate <= block.timestamp) revert DueDateNotInFuture();
+        uint256 count = tiers.length;
+        if (count > MAX_TIERS) revert TooManyTiers();
+
+        uint64 previousCutoff;
+        for (uint256 i; i < count; ++i) {
+            DiscountTier calldata tier = tiers[i];
+            if (tier.cutoff <= previousCutoff) revert TiersNotAscending();
+            if (tier.cutoff > dueDate) revert TierAfterDueDate();
+            if (tier.discountBps > BPS_DENOMINATOR) revert DiscountTooLarge();
+            previousCutoff = tier.cutoff;
+            _tiers.push(uint80((uint256(tier.cutoff) << 16) | tier.discountBps));
+        }
+
+        if (!StdPrecompiles.TIP20_FACTORY.isTIP20(token)) revert NotTIP20();
+
+        _initialized = true;
+        _seller = seller;
+        _dueDate = dueDate;
+        _token = token;
+        _invoiceRef = invoiceRef;
+        _principal = principal;
+        if (payoutAddress != address(0) && payoutAddress != seller) _payoutAddress = payoutAddress;
     }
 
     /// @notice Lock the full principal in escrow. The caller becomes the buyer.
@@ -143,7 +176,16 @@ contract InvoiceEscrow {
     ///      Emits `Funded(buyer, resolvedRefundAddress, principal)`.
     /// @param refundAddress Where the buyer's discount and any cancellation refund go; address(0) means the buyer.
     function fund(address refundAddress) external {
-        revert("unimplemented");
+        if (_status != Status.Active) revert NotActive();
+        if (msg.sender == _seller) revert SellerCannotFund();
+
+        _buyer = msg.sender;
+        if (refundAddress != address(0) && refundAddress != msg.sender) _refundAddress = refundAddress;
+        _status = Status.Funded;
+
+        uint128 principal = _principal;
+        ITIP20(_token).transferFromWithMemo(msg.sender, address(this), principal, _invoiceRef);
+        emit Funded(msg.sender, _refund(), principal);
     }
 
     /// @notice Settle a funded invoice at the discount tier in force now.
@@ -156,7 +198,24 @@ contract InvoiceEscrow {
     ///      Emits `Paid(msg.sender, payout, toSeller, refundAddr, refund, bps)`.
     ///      A payout or refund address is never an authorised caller.
     function triggerPayment() external {
-        revert("unimplemented");
+        if (msg.sender != _seller && msg.sender != _buyer) revert NotParty();
+        if (_status != Status.Funded) revert NotFunded();
+
+        uint16 bps = _activeDiscount(uint64(block.timestamp));
+        uint128 principal = _principal;
+        uint128 refundAmount = uint128((uint256(principal) * bps) / BPS_DENOMINATOR);
+        uint128 toSeller = principal - refundAmount;
+        address payout = _payout();
+        address refundTo = _refund();
+
+        _status = Status.Paid;
+
+        ITIP20 token = ITIP20(_token);
+        bytes32 invoiceRef = _invoiceRef;
+        token.transferWithMemo(payout, toSeller, invoiceRef);
+        if (refundAmount > 0) token.transferWithMemo(refundTo, refundAmount, invoiceRef);
+
+        emit Paid(msg.sender, payout, toSeller, refundTo, refundAmount, bps);
     }
 
     /// @notice Cancel an invoice that has not been paid.
@@ -169,7 +228,20 @@ contract InvoiceEscrow {
     ///      `invoiceRef` as the memo. Emits `Cancelled(msg.sender, refunded)` where `refunded` is `principal`
     ///      if it was Funded, otherwise 0. An Active invoice moves no tokens.
     function cancel() external {
-        revert("unimplemented");
+        if (msg.sender != _seller && !(msg.sender == _buyer && block.timestamp > _dueDate)) {
+            revert NotAuthorizedToCancel();
+        }
+        Status status = _status;
+        if (status != Status.Active && status != Status.Funded) revert AlreadySettled();
+
+        _status = Status.Cancelled;
+
+        uint128 refunded;
+        if (status == Status.Funded) {
+            refunded = _principal;
+            ITIP20(_token).transferWithMemo(_refund(), refunded, _invoiceRef);
+        }
+        emit Cancelled(msg.sender, refunded);
     }
 
     // ───────────────────────────── Reads ──────────────────────────────
@@ -179,7 +251,24 @@ contract InvoiceEscrow {
     ///      resolved (the buyer if none was given), and is address(0) while there is no buyer. `buyer` is
     ///      address(0) until funded. `tiers` are returned in creation order. `status` reflects the latest write.
     function getInvoice() external view returns (InvoiceState memory) {
-        revert("unimplemented");
+        uint256 count = _tiers.length;
+        DiscountTier[] memory tiers = new DiscountTier[](count);
+        for (uint256 i; i < count; ++i) {
+            uint80 packed = _tiers[i];
+            tiers[i] = DiscountTier({cutoff: uint64(packed >> 16), discountBps: uint16(packed)});
+        }
+        return InvoiceState({
+            invoiceRef: _invoiceRef,
+            seller: _seller,
+            payoutAddress: _payout(),
+            buyer: _buyer,
+            refundAddress: _refund(),
+            token: _token,
+            principal: _principal,
+            dueDate: _dueDate,
+            tiers: tiers,
+            status: _status
+        });
     }
 
     /// @notice The discount that applies at `timestamp`.
@@ -188,6 +277,30 @@ contract InvoiceEscrow {
     ///      Pure function of the stored tiers; does not look at the invoice status.
     /// @param timestamp A unix timestamp in seconds.
     function activeDiscount(uint64 timestamp) external view returns (uint16) {
-        revert("unimplemented");
+        return _activeDiscount(timestamp);
+    }
+
+    // ──────────────────────────── Internals ───────────────────────────
+
+    function _activeDiscount(uint64 timestamp) private view returns (uint16) {
+        uint256 count = _tiers.length;
+        for (uint256 i; i < count; ++i) {
+            uint80 packed = _tiers[i];
+            // forge-lint: disable-next-line(unsafe-typecast)
+            if (timestamp < uint64(packed >> 16)) return uint16(packed); // low 16 bits are discountBps
+        }
+        return 0;
+    }
+
+    /// @dev The payout address, or the seller if none was given.
+    function _payout() private view returns (address) {
+        address payout = _payoutAddress;
+        return payout == address(0) ? _seller : payout;
+    }
+
+    /// @dev The refund address, or the buyer if none was given.
+    function _refund() private view returns (address) {
+        address refund = _refundAddress;
+        return refund == address(0) ? _buyer : refund;
     }
 }

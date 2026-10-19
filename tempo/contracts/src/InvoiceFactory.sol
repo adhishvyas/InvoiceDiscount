@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
+import {Clones} from "@openzeppelin/contracts/proxy/Clones.sol";
 import {InvoiceEscrow, DiscountTier} from "./InvoiceEscrow.sol";
 
 /// @title InvoiceFactory
@@ -51,6 +52,8 @@ contract InvoiceFactory {
         DiscountTier[] calldata tiers,
         address payoutAddress
     ) external returns (address invoice) {
-        revert("unimplemented");
+        invoice = Clones.clone(implementation);
+        InvoiceEscrow(invoice).initialize(msg.sender, invoiceRef, token, principal, dueDate, tiers, payoutAddress);
+        emit InvoiceCreated(invoice, msg.sender, invoiceRef, token, principal, dueDate);
     }
 }

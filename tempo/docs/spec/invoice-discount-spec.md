@@ -95,7 +95,7 @@ struct InvoiceState {
 
 - A `bytes32` holding a UTF-8 string of **at most 32 bytes**, left-aligned and right-padded with zero bytes. This is the format `viem`'s `stringToHex(ref, { size: 32 })` produces, and `hexToString` decodes it.
 - 32 **bytes**, not 32 characters. Non-ASCII characters take more than one byte each.
-- Required: it must not be `bytes32(0)` → `EmptyInvoiceRef`.
+- Required: it must not be `bytes32(0)` → `EmptyInvoiceRef`. Any other value is accepted and used byte for byte as the memo; the contract does not check that it is valid UTF-8 or zero-padded.
 - It is used unchanged as the memo on every transfer the escrow makes (§3.5).
 - The contract does **not** enforce uniqueness, which saves a storage slot per invoice. The **frontend rejects** a reference the connected seller has already used (§4.3). A seller calling the factory directly can still reuse one.
 
@@ -112,7 +112,7 @@ The packing below keeps the number of fresh slots per invoice small, since each 
 | 4 | `payoutAddress` (20 B). Left zero if the seller gave none |
 | 5 | `buyer` (20 B). Written by `fund` |
 | 6 | `refundAddress` (20 B). Left zero if the buyer gave none |
-| 7+ | `tiers` (length, plus elements: three `{uint64, uint16}` tiers fit in each slot) |
+| 7+ | `tiers`: a packed `uint80[]` (length, then three tiers per slot), each element `(cutoff << 16) \| discountBps`. A storage array of `DiscountTier` structs would use one slot per tier, because struct array elements do not pack |
 
 The exact layout is up to the implementer. The requirement is to minimise new slots.
 
@@ -169,9 +169,12 @@ The factory deploys the implementation itself, so the implementation's `factory`
   - `tiers.length <= 10` → `TooManyTiers`
   - for each tier: `cutoff > previousCutoff` (strictly ascending; the first must be > 0) → `TiersNotAscending`; `cutoff <= dueDate` → `TierAfterDueDate`; `discountBps <= 10_000` → `DiscountTooLarge`
   - `StdPrecompiles.TIP20_FACTORY.isTIP20(token)` is true → `NotTIP20`. The precompile checks the fixed 12-byte TIP-20 prefix (`0x20C000000000000000000000`) **and** that the address has code, so an unused prefixed address is rejected.
+- The per-tier checks run in one pass, tier by tier: for tier 0, all three checks in the order above, then tier 1, and so on. The first failing check reverts.
+- Only the checks above are made. A tier with a cutoff already in the past, a tier with `discountBps == 0`, and a later tier with a larger discount than an earlier one are all accepted. A payout address equal to the buyer, or a refund address equal to the seller, is also allowed.
 - Stores `payoutAddress` only if it is non-zero and differs from `seller`.
 - Sets `status = Active`.
 - Zero tiers is allowed. The invoice then always pays the full principal.
+- The behaviour of `fund`, `triggerPayment`, `cancel` and `getInvoice` on the implementation contract itself is undefined. It never holds funds, and invoices are only ever the clones.
 
 #### `fund(address refundAddress)`
 
@@ -183,17 +186,17 @@ The factory deploys the implementation itself, so the implementation's `factory`
 
 #### `triggerPayment()`
 
-- Requires `msg.sender == seller || msg.sender == buyer` → `NotParty`.
+- Requires `msg.sender == seller || msg.sender == buyer` → `NotParty`. An unfunded invoice has `buyer == address(0)`, which is never a party: `address(0)` calling `triggerPayment` gets `NotParty`, not `NotFunded`.
 - Requires `status == Funded` → `NotFunded`.
 - `bps = activeDiscount(block.timestamp)`
 - `refund = principal * bps / 10_000`, rounded down. `toSeller = principal - refund`. Any rounding remainder goes to the seller.
 - Sets `status = Paid` **before** the transfers (checks-effects-interactions).
-- `transferWithMemo(_payout(), toSeller, invoiceRef)`. Then, if `refund > 0`, `transferWithMemo(_refund(), refund, invoiceRef)`.
-- Emits `Paid(msg.sender, _payout(), toSeller, _refund(), refund, bps)`.
+- `transferWithMemo(_payout(), toSeller, invoiceRef)`. This transfer is always made, even when `toSeller` is 0 (a 100% discount). Then, if `refund > 0`, `transferWithMemo(_refund(), refund, invoiceRef)`.
+- Emits `Paid(msg.sender, _payout(), toSeller, _refund(), refund, bps)`. `refundAddress` is always the resolved refund address, also when `refund == 0`.
 
 #### `cancel()`
 
-- Authorised if `msg.sender == seller` (any time while Active or Funded), or if `msg.sender == buyer && block.timestamp > dueDate`. Before funding the buyer is `address(0)`, so on an unfunded invoice only the seller can cancel, including after the due date. Otherwise → `NotAuthorizedToCancel`.
+- Authorised if `msg.sender == seller` (any time while Active or Funded), or if `msg.sender == buyer && block.timestamp > dueDate`. Before funding the buyer is `address(0)`, which is never authorised, so on an unfunded invoice only the seller can cancel, including after the due date. Otherwise → `NotAuthorizedToCancel`.
 - Requires `status == Active || status == Funded` → `AlreadySettled`.
 - Sets `status = Cancelled`.
 - If it was `Funded`: `transferWithMemo(_refund(), principal, invoiceRef)`.
@@ -249,7 +252,7 @@ Every one of these transfers carries the memo `INV-2026-0042`.
 
 - **Pause / TIP-403 block:** if the issuer pauses the token, or blocks a party or a payout/refund address, then `fund`, `triggerPayment` and `cancel` revert. Funds stay in escrow until the block is lifted. There is no rescue path, which is acceptable for the PoC.
 - **Receive policies:** a payout to an address with a restrictive receive policy *succeeds*, but the funds go to the `ReceivePolicyGuard` for that address to claim. The contract treats this as paid. Sellers and buyers should give addresses that accept the token.
-- **TIP-20-prefixed recipients:** TIP-20 transfers revert for a recipient with the TIP-20 prefix (a token address). A payout or refund address like that makes `triggerPayment` or `cancel` revert, and the funds stay in escrow. Not checked in code.
+- **TIP-20-prefixed recipients:** TIP-20 transfers revert for a recipient with the TIP-20 prefix (a token address). A payout address like that makes `triggerPayment` revert, and a refund address like that makes `cancel` revert and also `triggerPayment` when the discount is above zero (with a zero discount no refund transfer is made, so a prefixed refund address does not block payment). The funds stay in escrow. Not checked in code.
 - **`burnAt`:** an issuer holding `BURN_AT_ROLE` can burn escrowed funds. This is a trust assumption about the issuer.
 
 ---

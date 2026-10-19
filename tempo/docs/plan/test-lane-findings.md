@@ -26,9 +26,9 @@ No **test bugs** were found.
 
 ## Spec questions raised by the test author
 
-All twelve are consistent with the current implementation and with the tests' stated reading. None caused a failure. They are **spec gaps** (the spec is silent or ambiguous); the proposed resolution is to write the behaviour down, subject to the user's decision.
+All twelve are consistent with the current implementation and with the tests' stated reading. None caused a failure. They are **spec gaps** (the spec was silent or ambiguous). **Resolved 2026-10-19:** the user approved writing the behaviour into the spec, and it is now in §3.2, §3.3, §3.5 and §3.9.
 
-| Q | Question | Behaviour (implementation = tests) | Proposed spec text |
+| Q | Question | Behaviour (implementation = tests) | Spec text written |
 |---|---|---|---|
 | 1 | `Paid` event when `refund == 0`: which `refundAddress`? | The resolved refund address, `refundToBuyer = 0` | State it in §3.6 |
 | 2 | 100% discount: is the zero-value payout transfer made? | Yes, always made (tests accept either) | §3.5: "the seller transfer is always made, even if zero" |
@@ -46,7 +46,7 @@ All twelve are consistent with the current implementation and with the tests' st
 ## Other notes
 
 - **Tier storage.** A Solidity storage array of structs cannot pack, so spec §3.3's "three tiers per slot" is met with a packed `uint80[]`. The fork gas numbers confirm it: `createInvoice` costs 1.86M gas with 0 tiers, 2.37M with 3 (+2 fresh slots) and 3.14M with 10 (+5 fresh slots).
-- **Factory ABI.** The factory ABI gained `FailedDeployment` and `InsufficientBalance` from OpenZeppelin `Clones`. This deviates from the frozen ABI and needs the user's approval for a new tag.
+- **Factory ABI.** The factory ABI gained `FailedDeployment` and `InsufficientBalance` from OpenZeppelin `Clones`. The user approved a new tag, `tempo-interface-v1.1`.
 - **Test-author process.** The test worktree started at the wrong commit (the Stellar prototype); the agent reset its own branch to `tempo-interface-v1` and looked at nothing else. The branch changes only files under `tempo/contracts/test/`.
 
 ## Summary
@@ -55,6 +55,6 @@ All twelve are consistent with the current implementation and with the tests' st
 |---|---|
 | Impl bug | 2 (one root cause) |
 | Test bug | 0 |
-| Spec gap | 12 questions, 0 failures |
+| Spec gap | 12 questions, 0 failures, all resolved in the spec |
 
 The independent tests caught 2 implementation bugs that the main session's smoke tests missed, from a spec-only reading and a stub-only interface.

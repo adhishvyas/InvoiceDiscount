@@ -285,7 +285,7 @@ Implement §3.5 exactly, without reading the test lane's branch:
 
 ### C8 — Deploy script + testnet deploy
 
-> **Status:** ⏳ **Pending**: script written and simulated; the user still has to broadcast it.
+> **Status:** ✅ **Completed** (deployed 2026-10-19, block 40304928; see `contracts/deployments/moderato.json`).
 - `script/Deploy.s.sol`: deploys `InvoiceFactory` (which deploys the implementation) and logs both addresses and the block number.
 - Claude provides the exact command (spec §6, using `--account tempo-deployer`). **The user broadcasts it.**
 - After the deploy, write `tempo/contracts/deployments/moderato.json` with `{ factory, implementation, deployBlock }`.

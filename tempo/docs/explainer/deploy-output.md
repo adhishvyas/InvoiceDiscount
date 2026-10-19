@@ -7,7 +7,7 @@
 - `forge script` works in two phases. First it **simulates** the script locally to see which transactions it would send. Then, because of `--broadcast`, it **signs and sends** those transactions for real.
 - The script sent **one transaction**. That single transaction deployed **two contracts**: the factory, and the escrow implementation that the factory's constructor creates.
 - It cost **≈ $0.0044 in AlphaUSD** (7,213,176 gas at 0.60475625 gwei), paid in a stablecoin because Tempo has no native gas token.
-- Both contracts were then **verified on Sourcify** (Tempo's verifier at `contracts.tempo.xyz`) with an **exact match**, so anyone can read the source code behind the bytecode on-chain.
+- Both contracts were then **verified on Sourcify** (Tempo's verifier at `contracts.tempo.xyz`) with an **exact match**, so anyone can read the source code behind the bytecode on-chain (see §6.1 for how).
 - The deployed addresses:
   - `InvoiceFactory`: `0x9e9f4Da093bFD225145396d80ca5e799e10Ce0fC`
   - `InvoiceEscrow` implementation: `0xF0964E9A43664ca32b9890Ba21EB08f41933798A`
@@ -219,7 +219,7 @@ Sourcify has two levels of match:
 - **`exact_match`** (also called a *full* or *perfect* match): the bytecode matches **and** so does the metadata hash that solc appends to the end of the bytecode. That hash covers the source files byte for byte, including comments and file names. So this is the exact source that was deployed.
 - **`match`** (a *partial* match): the executable code matches, but the metadata differs, for example because a comment or whitespace changed. The logic is the same, but the files are not byte-for-byte the originals.
 
-`exact_match` is the best possible result.
+`exact_match` is the best possible result. It describes the **runtime** code, the code that lives at the address and runs when someone calls the contract. Sourcify also compares the **creation** code, which includes the constructor and runs only once at deploy time. For the factory, the verifier's API reports `runtimeMatch: exact_match` but `creationMatch: match`. The creation code's executable part matches but its metadata differs. The code people actually call is an exact match, so this doesn't weaken the guarantee.
 
 ```
 Start verifying contract `0xF0964E9A43664ca32b9890Ba21EB08f41933798A` deployed on tempo-moderato
@@ -232,6 +232,32 @@ All (2) contracts were verified!
 ```
 
 The same steps for the `InvoiceEscrow` implementation. This matters for users: each invoice clone is a minimal proxy that forwards every call to this implementation. Explorers can tell this from the clone's bytecode, so once the implementation is verified, people can read the code that actually runs every invoice.
+
+### 6.1 How to read the verified source
+
+The source is held by Tempo's verifier at `contracts.tempo.xyz`. It is **not** on the public `sourcify.dev`, which has nothing for chain 42431.
+
+**Block explorer.** Open the address in the testnet explorer, for example `https://explore.testnet.tempo.xyz/address/0x9e9f4Da093bFD225145396d80ca5e799e10Ce0fC`. Explorers usually show verified source on a "Contract" or "Code" tab.
+
+**Verifier API.** The verifier uses the Sourcify v2 API, so you can fetch the source with `curl`:
+
+```bash
+ADDR=0x9e9f4Da093bFD225145396d80ca5e799e10Ce0fC   # or the implementation, 0xF0964E9A43664ca32b9890Ba21EB08f41933798A
+API=https://contracts.tempo.xyz/v2/contract/42431/$ADDR
+
+# Match status (match, runtimeMatch, creationMatch, verifiedAt)
+curl -s $API
+
+# List the verified source files
+curl -s "$API?fields=sources" | jq -r '.sources | keys[]'
+
+# Print one file
+curl -s "$API?fields=sources" | jq -r '.sources["src/InvoiceFactory.sol"].content'
+```
+
+For the factory this lists 20 files: `src/InvoiceFactory.sol`, `src/InvoiceEscrow.sol`, and the OpenZeppelin and tempo-std library files they import. Other fields work the same way, for example `?fields=abi` or `?fields=all`.
+
+**Check it yourself.** Verification is trustworthy because anyone can repeat it. Compile the returned source with the compiler settings the API returns, and compare the result with the code on-chain: `cast code $ADDR --rpc-url $TEMPO_RPC_URL`.
 
 ---
 
@@ -262,4 +288,4 @@ Values that should not be shared, mainly the RPC URL (which for some providers c
 | Deploy block | `40304928` |
 | Gas used | 7,213,176 |
 | Fee paid | 0.00436221326835 AlphaUSD |
-| Verification | Sourcify `exact_match` for both contracts |
+| Verification | Sourcify `exact_match` for both contracts (runtime code), on `contracts.tempo.xyz` |

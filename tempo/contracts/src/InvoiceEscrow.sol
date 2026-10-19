@@ -198,7 +198,8 @@ contract InvoiceEscrow {
     ///      Emits `Paid(msg.sender, payout, toSeller, refundAddr, refund, bps)`.
     ///      A payout or refund address is never an authorised caller.
     function triggerPayment() external {
-        if (msg.sender != _seller && msg.sender != _buyer) revert NotParty();
+        address buyer = _buyer;
+        if (msg.sender != _seller && (buyer == address(0) || msg.sender != buyer)) revert NotParty();
         if (_status != Status.Funded) revert NotFunded();
 
         uint16 bps = _activeDiscount(uint64(block.timestamp));
@@ -228,7 +229,8 @@ contract InvoiceEscrow {
     ///      `invoiceRef` as the memo. Emits `Cancelled(msg.sender, refunded)` where `refunded` is `principal`
     ///      if it was Funded, otherwise 0. An Active invoice moves no tokens.
     function cancel() external {
-        if (msg.sender != _seller && !(msg.sender == _buyer && block.timestamp > _dueDate)) {
+        address buyer = _buyer;
+        if (msg.sender != _seller && !(buyer != address(0) && msg.sender == buyer && block.timestamp > _dueDate)) {
             revert NotAuthorizedToCancel();
         }
         Status status = _status;

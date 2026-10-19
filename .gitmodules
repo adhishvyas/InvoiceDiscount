@@ -1,0 +1,9 @@
+[submodule "tempo/contracts/lib/openzeppelin-contracts"]
+	path = tempo/contracts/lib/openzeppelin-contracts
+	url = https://github.com/OpenZeppelin/openzeppelin-contracts
+[submodule "tempo/contracts/lib/forge-std"]
+	path = tempo/contracts/lib/forge-std
+	url = https://github.com/foundry-rs/forge-std
+[submodule "tempo/contracts/lib/tempo-std"]
+	path = tempo/contracts/lib/tempo-std
+	url = https://github.com/tempoxyz/tempo-std

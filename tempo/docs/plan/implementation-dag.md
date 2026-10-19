@@ -247,7 +247,7 @@ Implement §3.5 exactly, without reading the test lane's branch:
   - gas snapshot of `createInvoice` with 0, 3 and 10 tiers, to confirm the fresh-slot count
 - If S1 confirms Tempo-mode Anvil, the same suite also runs against it.
 
-**Verify:** compiles; red against the stubs on a fork (`forge test --match-path 'test/fork/*' --fork-url $TEMPO_RPC_URL`).
+**Verify:** compiles; red against the stubs on a fork (`FOUNDRY_PROFILE=fork forge test`, with `TEMPO_RPC_URL` set; plain `forge test` skips `test/fork/`).
 
 ### M1 — Merge + triage (main session, user decides spec gaps)
 1. Merge the test branch into the contract branch.

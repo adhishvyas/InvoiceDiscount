@@ -368,7 +368,7 @@ tempo/
 ```
 
 - Build: `forge build`
-- Test: `forge test -vvv` (unit and smoke, local). Fork suite: `forge test --match-path 'test/fork/*' --fork-url $TEMPO_RPC_URL -vvv`
+- Test: `forge test -vvv` (unit and smoke, local). Fork suite: `TEMPO_RPC_URL=https://rpc.moderato.tempo.xyz FOUNDRY_PROFILE=fork forge test -vvv`
 - Frontend: `pnpm` (run through `corepack pnpm`, since the WSL `npm` is the Windows binary)
 - Deploy (once per environment): `forge script script/Deploy.s.sol --rpc-url https://rpc.moderato.tempo.xyz --broadcast --verify --verifier-url https://contracts.tempo.xyz --tempo.fee-token 0x20c0000000000000000000000000000000000001`
 - Testnet funds: `cast rpc tempo_fundAddress <ADDR> --rpc-url https://rpc.moderato.tempo.xyz`

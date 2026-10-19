@@ -159,6 +159,8 @@ The summary counts each class, and records how many implementation bugs the inde
 ## Nodes
 
 ### P0 — Prerequisites (user runs)
+
+> **Status:** ✅ **Completed**
 - Install Foundry: `curl -L https://foundry.paradigm.xyz | bash && foundryup` (the Tempo build; `-n tempo` is deprecated). **Done 2026-10-19: forge 1.8.5, deployer `0xA6C5…716d` funded.**
 - Node ≥ 20 (v22 is already present in WSL).
 - Create a deployer keystore: `cast wallet import tempo-deployer --interactive`. No raw private keys in `.env`.
@@ -168,6 +170,8 @@ The summary counts each class, and records how many implementation bugs the inde
 **Verify:** `forge --version` shows the Tempo build; `cast balance`/TIP-20 `balanceOf` on the deployer shows testnet AlphaUSD.
 
 ### S1 — Spec verification spike (main session, using Tempo docs)
+
+> **Status:** ✅ **Completed**
 Check each assumption above against the Tempo docs and the installed tooling:
 1. TIP-20 address prefix rule (how many bytes, and whether OUSD `0x20c0…6a37da5c996874be` fits it).
 2. `tempo-std` package name, install path, `ITIP20` function names, and the **memo event signature** (T1's mock must emit the same event).
@@ -180,12 +184,16 @@ Check each assumption above against the Tempo docs and the installed tooling:
 **Verify:** every item resolved or explicitly marked unknown with a fallback.
 
 ### S2 — Spec amendments
+
+> **Status:** ✅ **Completed**
 - Apply the factory-deploys-implementation change to §3.4/§3.5 (no-arg factory constructor; `implementation()` public getter; `factory = msg.sender` in the escrow constructor; the escrow constructor still marks the implementation initialised).
 - Apply any S1 corrections (prefix rule, API names) and the `activeDiscount(uint64 timestamp)` rename. Show the diff to the user before saving.
 
 **Verify:** the spec has no remaining "verify before relying on it" notes, or each one that remains links to `verification-notes.md`. The spec is final enough to be the test lane's source of truth.
 
 ### C1 — Foundry scaffold
+
+> **Status:** ✅ **Completed**
 - `tempo/contracts/` via `forge init -n tempo` (or plain `forge init` plus manual config if S1 says the template differs).
 - Install `OpenZeppelin/openzeppelin-contracts` (for `Clones`) and `tempo-std`; set remappings.
 - `foundry.toml`: pin `solc`, enable the optimizer, add an `[rpc_endpoints] moderato = "${TEMPO_RPC_URL}"` alias, and a `fork` profile limited to `test/fork/`.
@@ -195,6 +203,8 @@ Check each assumption above against the Tempo docs and the installed tooling:
 **Verify:** `forge build` succeeds on the empty project.
 
 ### C2 — Interface freeze (stubs + NatSpec)
+
+> **Status:** ✅ **Completed**
 See [Interface freeze](#interface-freeze-node-c2) for the rules.
 - `src/InvoiceEscrow.sol`: `Status`, `DiscountTier`, `InvoiceState` at file level; all custom errors from §3.5; events from §3.6; storage variables in the §3.3 packed order; immutable `factory`; every function signature, stubbed, with full NatSpec.
 - `src/InvoiceFactory.sol`: no-arg constructor that deploys the implementation, `implementation` getter, `InvoiceCreated` event, stubbed `createInvoice`.
@@ -207,6 +217,8 @@ See [Interface freeze](#interface-freeze-node-c2) for the rules.
 - `forge inspect InvoiceEscrow abi` and `forge inspect InvoiceFactory abi` saved as the frozen ABI.
 
 ### C4 — InvoiceEscrow logic (main session, in parallel with T1–T3)
+
+> **Status:** ✅ **Completed**
 Implement §3.5 exactly, without reading the test lane's branch:
 - `constructor`: `factory = msg.sender`; mark initialised.
 - `initialize`: all validations in the spec order; store `payoutAddress` only if non-zero and ≠ seller.
@@ -216,12 +228,16 @@ Implement §3.5 exactly, without reading the test lane's branch:
 **Verify:** `forge build`; the ABI diff against `tempo-interface-v1` is empty.
 
 ### C5 — InvoiceFactory (main session)
+
+> **Status:** ✅ **Completed**
 - `createInvoice`: `Clones.clone` → `initialize(msg.sender, …)` → emit `InvoiceCreated` → return.
 - `test/smoke/Smoke.t.sol`: the main session's own minimal checks (create, fund, pay at one tier, cancel). It creates its own real local token (`createToken` + `mint`) in `test/smoke/`, separate from the test lane's harness.
 
 **Verify:** `forge test --match-path 'test/smoke/*'` passes.
 
 ### T1 — Test harness (Sonnet sub-agent)
+
+> **Status:** ✅ **Completed**
 - `test/unit/Base.t.sol`: deploys the factory, creates a real TIP-20 with `StdPrecompiles.TIP20_FACTORY.createToken("T", "T", "USD", StdTokens.PATH_USD, address(this), salt)`, grants itself `ISSUER_ROLE` via `ITIP20RolesAuth`, and keeps an unprefixed address for the `NotTIP20` test (plus a prefixed address with no code). Named actors: seller, buyer, payout, refund, stranger. Helpers to mint, to `createInvoice` with default tiers, and to fund.
 - Memo assertions use the real `TransferWithMemo` event (`verification-notes.md` item 2c).
 - Beware: address literals need EIP-55 checksums.
@@ -229,6 +245,8 @@ Implement §3.5 exactly, without reading the test lane's branch:
 **Verify:** `forge build` passes; a harness self-test mints, approves, and sees a `TransferWithMemo` event from a `transferWithMemo` call.
 
 ### T2 — Unit tests, red against stubs (Sonnet sub-agent)
+
+> **Status:** ✅ **Completed**
 - `test/unit/InvoiceEscrow.t.sol`: all 22 tests in spec §5, using `vm.warp` for the tier and due-date boundaries.
 - `test_ValidationErrors` covers every error, one assertion each, with exact selectors.
 - `test_TransfersCarryInvoiceRefMemo` uses `vm.expectEmit` on the real `TransferWithMemo` event.
@@ -239,6 +257,8 @@ Implement §3.5 exactly, without reading the test lane's branch:
 **Verify:** `forge test --match-path 'test/unit/*'` against the stubs: **every test fails** (red check). Committed on the test branch.
 
 ### T3 — Fork tests (Sonnet sub-agent)
+
+> **Status:** ✅ **Completed**
 - `test/fork/InvoiceFork.t.sol`, running only under the fork profile. Uses real AlphaUSD, funding accounts by `vm.prank(holder)` + `transfer` (`deal` fails; see the verification notes).
 - Cases:
   - happy path with the real memo events
@@ -250,6 +270,8 @@ Implement §3.5 exactly, without reading the test lane's branch:
 **Verify:** compiles; red against the stubs on a fork (`FOUNDRY_PROFILE=fork forge test`, with `TEMPO_RPC_URL` set; plain `forge test` skips `test/fork/`).
 
 ### M1 — Merge + triage (main session, user decides spec gaps)
+
+> **Status:** ✅ **Completed**
 1. Merge the test branch into the contract branch.
 2. Run `forge test` (unit) and the fork suite.
 3. For every failure and every entry in `SPEC_QUESTIONS.md`, classify it as impl bug, test bug or spec gap, and log it in `test-lane-findings.md`.
@@ -262,6 +284,8 @@ Implement §3.5 exactly, without reading the test lane's branch:
 **Verify:** the full unit and fork suites pass; `forge coverage` shows 100% line coverage of `src/`; the findings log is complete with a summary.
 
 ### C8 — Deploy script + testnet deploy
+
+> **Status:** ⏳ **Pending**: script written and simulated; the user still has to broadcast it.
 - `script/Deploy.s.sol`: deploys `InvoiceFactory` (which deploys the implementation) and logs both addresses and the block number.
 - Claude provides the exact command (spec §6, using `--account tempo-deployer`). **The user broadcasts it.**
 - After the deploy, write `tempo/contracts/deployments/moderato.json` with `{ factory, implementation, deployBlock }`.
@@ -269,6 +293,8 @@ Implement §3.5 exactly, without reading the test lane's branch:
 **Verify:** both contracts are verified on contracts.tempo.xyz; `cast call <factory> "implementation()"` returns the implementation address.
 
 ### F1 — Frontend scaffold (copy Stellar styling)
+
+> **Status:** ✅ **Completed**
 - `tempo/frontend/`: Vite + React + TS + Tailwind v4 + react-router, on the same major versions as `stellar/frontend`.
 - **Copy** (not import) `index.css`/`App.css` styling, the layout shell and `hero.png` from `stellar/frontend`. Drop all Stellar/Freighter code.
 - Add `wagmi`, `viem` and `@tanstack/react-query`.
@@ -276,6 +302,8 @@ Implement §3.5 exactly, without reading the test lane's branch:
 **Verify:** `npm run build` and `npm run lint` pass; the shell renders three empty routes.
 
 ### F2 — Helpers + Vitest
+
+> **Status:** ✅ **Completed**
 - `src/lib/units.ts`: `toUnits` and `fromUnits`, taking decimals as a parameter that callers read from `decimals()`.
 - `src/lib/ref.ts`: `encodeRef` (trimmed, ≤32 UTF-8 bytes), `decodeRef` and `refByteLength`.
 - `src/lib/validation.ts`: a pure `validateInvoiceForm()` that mirrors §3.5 and returns per-field errors.
@@ -289,12 +317,16 @@ Implement §3.5 exactly, without reading the test lane's branch:
 **Verify:** `npm test` passes.
 
 ### F3 — ABI + config module
+
+> **Status:** ✅ **Completed**
 - `scripts/sync-abi` (an npm script) runs `forge inspect … abi --json` into `src/abi/*.ts` as `as const`, so wagmi types the calls.
 - `src/config.ts`: `tempoModerato` chain, the two connectors (exact options per S1), the token list from §4.1, and `VITE_FACTORY_ADDRESS`/`VITE_FACTORY_DEPLOY_BLOCK` from `.env` (`.env.example` committed).
 
 **Verify:** `tsc --noEmit` passes; the typed `readContract(getInvoice)` compiles.
 
 ### F4 — Wallet / tx layer
+
+> **Status:** ✅ **Completed** (code, tests, build and lint pass). ⏳ Manual browser check still to do (connect/disconnect with both wallets, `feePayer: true` on a real write).
 - `useWalletMode()`: tells Tempo Wallet (`xyz.tempo`) from an injected wallet.
 - `useInvoiceWrite()`: on Tempo Wallet, adds `feePayer: true` and uses the `*Sync` action; on an injected wallet, does a plain write and then `waitForTransactionReceipt`. Exposes pending / success / error state.
 - `useFund()`: on Tempo Wallet, one batched `calls: [approve, fund(refund)]`; on an injected wallet, `approve` then `fund`.
@@ -303,11 +335,15 @@ Implement §3.5 exactly, without reading the test lane's branch:
 **Verify:** connect and disconnect work with both wallets in `npm run dev`; a no-op read works.
 
 ### F5 — Home page
+
+> **Status:** ✅ **Completed** (code, tests, build and lint pass). ⏳ Manual browser check still to do.
 Hero, Create CTA, address lookup (`isAddress`), and the three-step "How it works".
 
 **Verify:** an invalid address shows an error; a valid one navigates to `/invoice/:address`.
 
 ### F6 — CreateInvoice + duplicate check
+
+> **Status:** ✅ **Completed** (code, tests, build and lint pass). ⏳ Manual browser check still to do (duplicate check against the deployed factory).
 - Form per §4.3: live byte counter, token dropdown, tiers editor (max 10), optional payout address.
 - Duplicate check: paginated `getLogs` on `InvoiceCreated`, filtered by the indexed `seller` + `invoiceRef`, from `VITE_FACTORY_DEPLOY_BLOCK`, with the page size from S1. Runs on input (debounced) **and again right before sending**.
 - Submit through `useInvoiceWrite`; read the new address from the `InvoiceCreated` log in the receipt; show a success screen with copy and open buttons.
@@ -315,12 +351,16 @@ Hero, Create CTA, address lookup (`isAddress`), and the three-step "How it works
 **Verify:** client validation blocks every invalid case; a duplicate reference is blocked with a link to the existing invoice (manual, against the C8 deploy, or Anvil if S1 confirms it).
 
 ### F7 — InvoiceDetail + actions
+
+> **Status:** ✅ **Completed** (code, tests, build and lint pass). ⏳ Manual browser check still to do.
 - `getInvoice` plus `activeDiscount(now)`; reference shown prominently; addresses tagged "you" where they apply; active tier highlighted; current split preview.
 - Action visibility per the §4.3 table. Each action states where the money goes before signing, then refetches after the write.
 
 **Verify:** the action-visibility logic is a pure function with Vitest tests covering every role × status × before/after due date.
 
 ### I1 — End-to-end on Moderato
+
+> **Status:** ⏳ **Pending**
 Manual script in `tempo/docs/e2e-checklist.md`, using tier cutoffs **minutes** apart so tier changes are observable:
 1. Seller (Tempo Wallet) creates an invoice with a payout address. The duplicate reference is blocked.
 2. Buyer (second passkey account) funds with a refund address in one batched, sponsored tx.
@@ -332,6 +372,8 @@ Manual script in `tempo/docs/e2e-checklist.md`, using tier cutoffs **minutes** a
 **Verify:** every checklist item is ticked, with tx hashes recorded.
 
 ### D1 — Docs
+
+> **Status:** ⏳ **Pending**
 - Root `CLAUDE.md`: Tempo build, test, deploy and frontend commands (spec §6).
 - `tempo/README.md`: setup, the env vars, and the §3.9 TIP-20 risks.
 - Spec status changed from draft to implemented.

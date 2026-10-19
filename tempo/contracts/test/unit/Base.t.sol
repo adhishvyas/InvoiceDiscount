@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 
-import {Test} from "forge-std/Test.sol";
+import {Test, Vm} from "forge-std/Test.sol";
 import {ITIP20} from "tempo-std/interfaces/ITIP20.sol";
 import {ITIP20RolesAuth} from "tempo-std/interfaces/ITIP20RolesAuth.sol";
 import {StdPrecompiles} from "tempo-std/StdPrecompiles.sol";
@@ -146,6 +146,69 @@ abstract contract Base is Test {
         for (uint256 i = 0; i < n; i++) {
             t[i] = DiscountTier({cutoff: T0 + uint64((i + 1) * DAY), discountBps: uint16(100 * (n - i))});
         }
+    }
+
+    // ───────────── balance snapshots ─────────────
+
+    struct Bals {
+        uint256 seller;
+        uint256 buyer;
+        uint256 payout;
+        uint256 refund;
+        uint256 stranger;
+        uint256 escrow;
+    }
+
+    function _snap(address escrow) internal view returns (Bals memory b) {
+        b = Bals(_bal(seller), _bal(buyer), _bal(payout), _bal(refund), _bal(stranger), _bal(escrow));
+    }
+
+    function _total(Bals memory b) internal pure returns (uint256) {
+        return b.seller + b.buyer + b.payout + b.refund + b.stranger + b.escrow;
+    }
+
+    // ───────────── log helpers ─────────────
+
+    struct MemoLog {
+        address from;
+        address to;
+        uint256 amount;
+        bytes32 memo;
+    }
+
+    /// @dev All `TransferWithMemo` logs emitted by the test token, in order.
+    function _memoLogs(Vm.Log[] memory logs) internal view returns (MemoLog[] memory out) {
+        uint256 n;
+        for (uint256 i = 0; i < logs.length; i++) {
+            if (logs[i].emitter == address(token) && logs[i].topics[0] == TransferWithMemo.selector) n++;
+        }
+        out = new MemoLog[](n);
+        uint256 j;
+        for (uint256 i = 0; i < logs.length; i++) {
+            if (logs[i].emitter == address(token) && logs[i].topics[0] == TransferWithMemo.selector) {
+                out[j++] = MemoLog(
+                    address(uint160(uint256(logs[i].topics[1]))),
+                    address(uint160(uint256(logs[i].topics[2]))),
+                    abi.decode(logs[i].data, (uint256)),
+                    logs[i].topics[3]
+                );
+            }
+        }
+    }
+
+    /// @dev Number of logs emitted by `emitter`.
+    function _countFrom(Vm.Log[] memory logs, address emitter) internal pure returns (uint256 n) {
+        for (uint256 i = 0; i < logs.length; i++) {
+            if (logs[i].emitter == emitter) n++;
+        }
+    }
+
+    // ───────────── token pause ─────────────
+
+    function _pauseToken() internal {
+        ITIP20RolesAuth(address(token)).grantRole(token.PAUSE_ROLE(), address(this));
+        ITIP20RolesAuth(address(token)).grantRole(token.UNPAUSE_ROLE(), address(this));
+        token.pause();
     }
 }
 

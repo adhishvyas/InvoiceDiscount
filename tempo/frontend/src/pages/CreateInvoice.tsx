@@ -15,6 +15,8 @@ interface TierRow {
   discountPercent: string;
 }
 
+const BLANK_TIER: TierRow = { cutoff: '', discountPercent: '' };
+
 const toUnix = (local: string): number | null => {
   if (!local) return null;
   const ms = new Date(local).getTime();
@@ -44,12 +46,13 @@ export default function CreateInvoice() {
   const [amount, setAmount] = useState('');
   const [token, setToken] = useState<Address>(DEFAULT_TOKEN.address);
   const [dueDate, setDueDate] = useState('');
-  const [tiers, setTiers] = useState<TierRow[]>([]);
+  const [tiers, setTiers] = useState<TierRow[]>([BLANK_TIER]);
   const [payout, setPayout] = useState('');
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
   const [dup, setDup] = useState<{ key: string; invoice?: Address; error?: string }>();
   const [created, setCreated] = useState<Address>();
   const [copied, setCopied] = useState(false);
+  const [noTiersWarning, setNoTiersWarning] = useState(false);
 
   useEffect(() => {
     const timer = setInterval(() => setNow(Math.floor(Date.now() / 1000)), 15_000);
@@ -58,6 +61,10 @@ export default function CreateInvoice() {
 
   const { data: tokenDecimals } = useReadContract({ address: token, abi: erc20Abi, functionName: 'decimals' });
   const decimals = tokenDecimals ?? 6;
+
+  // A single untouched row means the seller chose no discounts; any edited row is validated as usual.
+  const noTiers = tiers.every((t) => t.cutoff === '' && t.discountPercent === '');
+  const activeTiers = useMemo(() => (noTiers ? [] : tiers), [noTiers, tiers]);
 
   const { valid, errors } = useMemo(
     () =>
@@ -68,12 +75,12 @@ export default function CreateInvoice() {
           token,
           decimals,
           dueDate: toUnix(dueDate),
-          tiers: tiers.map((t) => ({ cutoff: toUnix(t.cutoff), discountPercent: t.discountPercent })),
+          tiers: activeTiers.map((t) => ({ cutoff: toUnix(t.cutoff), discountPercent: t.discountPercent })),
           payoutAddress: payout,
         },
         now,
       ),
-    [invoiceRef, amount, token, decimals, dueDate, tiers, payout, now],
+    [invoiceRef, amount, token, decimals, dueDate, activeTiers, payout, now],
   );
 
   const refBytes = refByteLength(invoiceRef);
@@ -104,8 +111,13 @@ export default function CreateInvoice() {
   const updateTier = (i: number, patch: Partial<TierRow>) =>
     setTiers((rows) => rows.map((r, j) => (j === i ? { ...r, ...patch } : r)));
 
-  const submit = async () => {
+  const submit = async (confirmedNoTiers = false) => {
     if (!canCheck || !address || !FACTORY_ADDRESS || !valid) return;
+    if (noTiers && !confirmedNoTiers) {
+      setNoTiersWarning(true);
+      return;
+    }
+    setNoTiersWarning(false);
     // Check again right before sending: another tab or wallet may have used the reference since typing.
     try {
       const existing = await checkDuplicate();
@@ -126,7 +138,7 @@ export default function CreateInvoice() {
         token,
         toUnits(amount.trim(), decimals),
         BigInt(toUnix(dueDate)!),
-        tiers.map((t) => ({ cutoff: BigInt(toUnix(t.cutoff)!), discountBps: percentToBps(t.discountPercent)! })),
+        activeTiers.map((t) => ({ cutoff: BigInt(toUnix(t.cutoff)!), discountBps: percentToBps(t.discountPercent)! })),
         (payout.trim() || zeroAddress) as Address,
       ],
     });
@@ -219,7 +231,7 @@ export default function CreateInvoice() {
           <div className="flex items-center justify-between mb-1.5">
             <span className="text-sm text-slate-300">Early-payment discounts</span>
             <button
-              onClick={() => setTiers((rows) => [...rows, { cutoff: '', discountPercent: '' }])}
+              onClick={() => setTiers((rows) => [...rows, BLANK_TIER])}
               disabled={tiers.length >= MAX_TIERS}
               className="text-xs text-indigo-400 hover:text-indigo-300 disabled:opacity-40"
             >
@@ -274,10 +286,26 @@ export default function CreateInvoice() {
         </Field>
       </div>
 
+      {noTiersWarning && noTiers && (
+        <div className="mt-8 text-sm text-amber-300 bg-amber-950 border border-amber-800 rounded-lg p-4">
+          <p>
+            This invoice has no early-payment discounts, so the buyer has no incentive to pay early and always pays the full
+            amount. Add a tier above, or create it anyway.
+          </p>
+          <div className="flex gap-4 mt-3">
+            <button onClick={() => void submit(true)} className="underline font-medium">
+              Create anyway
+            </button>
+            <button onClick={() => setNoTiersWarning(false)} className="underline">
+              Dismiss
+            </button>
+          </div>
+        </div>
+      )}
       <button
-        onClick={submit}
+        onClick={() => void submit()}
         disabled={!canCheck || !valid || Boolean(duplicate) || pending}
-        className="mt-8 w-full bg-indigo-600 hover:bg-indigo-500 font-medium px-6 py-3 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        className={`${noTiersWarning && noTiers ? 'mt-4' : 'mt-8'} w-full bg-indigo-600 hover:bg-indigo-500 font-medium px-6 py-3 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed`}
       >
         {pending ? 'Creating…' : address ? 'Create invoice' : 'Connect a wallet to create'}
       </button>

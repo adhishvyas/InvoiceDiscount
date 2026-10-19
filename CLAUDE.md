@@ -59,7 +59,7 @@ For multi-step tasks, state a brief plan:
 
 Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
 
-Write all plans that you are asked to create in the claude-plans/ folder
+Write all plans that you are asked to create in the claude-plans/ folder, except chain-specific plans, which go in that chain's `<chain>/docs/plan/` folder (e.g. `tempo/docs/plan/`) so they are checked in with its docs
 
 ## Project Overview
 

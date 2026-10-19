@@ -5,8 +5,10 @@ import { useAccount, useReadContract, useReadContracts } from 'wagmi';
 import { invoiceEscrowAbi } from '../abi/InvoiceEscrow';
 import { EXPLORER_URL } from '../config';
 import { useFund } from '../hooks/useFund';
+import { useInvoiceHistory } from '../hooks/useInvoiceHistory';
 import { useInvoiceWrite, type WriteState } from '../hooks/useInvoiceWrite';
 import { visibleActions } from '../lib/actions';
+import type { InvoiceHistory } from '../lib/history';
 import { decodeRef } from '../lib/ref';
 import { computeSplit } from '../lib/split';
 import { STATUS_LABEL, Status, type StatusValue } from '../lib/status';
@@ -34,6 +36,129 @@ function Party({ label, address, account }: { label: string; address: Address; a
       )}
     </div>
   );
+}
+
+function Actor({ address, account }: { address: Address; account?: Address }) {
+  const you = account !== undefined && account.toLowerCase() === address.toLowerCase();
+  return (
+    <span className="font-mono">
+      <a href={`${EXPLORER_URL}/address/${address}`} target="_blank" rel="noreferrer" className="hover:underline" title={address}>
+        {short(address)}
+      </a>
+      {you && <span className="ml-2 text-xs bg-indigo-950 text-indigo-300 border border-indigo-800 px-2 rounded-full font-sans">you</span>}
+    </span>
+  );
+}
+
+function TimelineRow({
+  label,
+  at,
+  tx,
+  actor,
+  account,
+  actorFirst,
+}: {
+  label: string;
+  at?: bigint;
+  tx?: string;
+  actor?: Address;
+  account?: Address;
+  actorFirst?: boolean;
+}) {
+  return (
+    <li className="flex justify-between gap-4 text-sm py-2 border-b border-slate-800 last:border-0">
+      <span className={at === undefined ? 'text-slate-600' : 'text-slate-200 font-medium'}>{label}</span>
+      {at === undefined ? (
+        <span className="text-slate-600">Not yet</span>
+      ) : (
+        <span className="text-right text-slate-400">
+          {actor && actorFirst && (
+            <>
+              <Actor address={actor} account={account} /> on{' '}
+            </>
+          )}
+          {formatDate(at)}
+          {actor && !actorFirst && (
+            <>
+              {' '}by <Actor address={actor} account={account} />
+            </>
+          )}
+          {tx && (
+            <>
+              {' '}
+              <a href={`${EXPLORER_URL}/tx/${tx}`} target="_blank" rel="noreferrer" className="underline">
+                tx
+              </a>
+            </>
+          )}
+        </span>
+      )}
+    </li>
+  );
+}
+
+function Timeline({ history, status, account }: { history: InvoiceHistory; status: StatusValue; account?: Address }) {
+  const { created, funded, paid, cancelled } = history;
+  const open = status === Status.Active || status === Status.Funded;
+  return (
+    <ul>
+      <TimelineRow label="Created" at={created?.timestamp} tx={created?.tx} actor={created?.seller} account={account} />
+      {(funded || open) && <TimelineRow label="Funded" at={funded?.timestamp} tx={funded?.tx} actor={funded?.buyer} account={account} />}
+      {cancelled ? (
+        <TimelineRow label="Cancelled" at={cancelled.timestamp} tx={cancelled.tx} actor={cancelled.caller} account={account} />
+      ) : (
+        <TimelineRow
+          label={paid ? 'Triggered by' : 'Paid'}
+          at={paid?.timestamp}
+          tx={paid?.tx}
+          actor={paid?.caller}
+          account={account}
+          actorFirst
+        />
+      )}
+    </ul>
+  );
+}
+
+function Settlement({
+  history,
+  dueDate,
+  money,
+  account,
+}: {
+  history: InvoiceHistory;
+  dueDate: bigint;
+  money: (units: bigint) => string;
+  account?: Address;
+}) {
+  const { paid, cancelled } = history;
+  if (paid) {
+    const line = (label: string, amount: bigint, to: Address) => (
+      <div className="flex justify-between text-sm py-2 border-b border-slate-800 last:border-0">
+        <span className="text-slate-400">{label}</span>
+        <span>
+          <span className="font-medium text-slate-200">{money(amount)}</span> to <Actor address={to} account={account} />
+        </span>
+      </div>
+    );
+    return (
+      <>
+        {line('Seller payout', paid.toSeller, paid.payoutAddress)}
+        {line(`Buyer discount (${bpsToPercent(paid.discountBps)})`, paid.refundToBuyer, paid.refundAddress)}
+        <p className="text-xs text-slate-500 pt-2">
+          Triggered {paid.timestamp > dueDate ? 'after' : 'before'} the due date.
+        </p>
+      </>
+    );
+  }
+  if (cancelled) {
+    return (
+      <p className="text-sm text-slate-400">
+        {cancelled.refunded > 0n ? `${money(cancelled.refunded)} was returned to the buyer's refund address.` : 'No funds moved.'}
+      </p>
+    );
+  }
+  return null;
 }
 
 function WriteStatus({ state }: { state: WriteState }) {
@@ -87,6 +212,8 @@ function Invoice({ invoice }: { invoice: Address }) {
     functionName: 'activeDiscount',
     args: [BigInt(now)],
   });
+
+  const { data: history, isError: historyError, refetch: refetchHistory } = useInvoiceHistory(invoice, inv?.status ?? -1);
 
   const { state: fundState, fund, reset: resetFund } = useFund();
   const { state: txState, run, reset: resetTx } = useInvoiceWrite();
@@ -144,6 +271,29 @@ function Invoice({ invoice }: { invoice: Address }) {
         <Party label="Buyer" address={inv.buyer} account={account} />
         <Party label="Refund address" address={inv.refundAddress} account={account} />
       </section>
+
+      {(history || historyError) && (
+        <section>
+          <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-widest mb-3">History</h2>
+          {history ? (
+            <div className="bg-slate-900 border border-slate-800 rounded-xl px-5 py-2">
+              <Timeline history={history} status={status} account={account} />
+              {(history.paid || history.cancelled) && (
+                <div className="border-t border-slate-700 mt-2 pt-2">
+                  <Settlement history={history} dueDate={inv.dueDate} money={money} account={account} />
+                </div>
+              )}
+            </div>
+          ) : (
+            <p className="text-sm text-slate-500">
+              History unavailable.{' '}
+              <button onClick={() => void refetchHistory()} className="underline">
+                Retry
+              </button>
+            </p>
+          )}
+        </section>
+      )}
 
       <section>
         <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-widest mb-3">Early-payment discounts</h2>

@@ -35,8 +35,9 @@ struct InvoiceState {
 /// @title InvoiceEscrow
 /// @notice Escrow for one invoice. Deployed once as an implementation; each invoice is an
 ///         EIP-1167 clone created and initialised atomically by `InvoiceFactory`.
-/// @dev INTERFACE FREEZE (tag `tempo-interface-v1`): signatures, events, errors and the behaviour
-///      described in the NatSpec below are final. Bodies are stubs.
+/// @dev INTERFACE FREEZE (tag `tempo-interface-v2`): signatures, events, errors and the behaviour
+///      described in the NatSpec below are final. v2 adds `settleDirect` (MPP pay-now spec §3), whose body
+///      is a stub.
 ///
 ///      Storage layout (clones): slot 0 = seller (20 B) | dueDate (8 B) | status (1 B) | initialized (1 B);
 ///      1 token; 2 invoiceRef; 3 principal; 4 payoutAddress (zero if none); 5 buyer; 6 refundAddress
@@ -60,6 +61,8 @@ contract InvoiceEscrow {
     error NotFunded();
     error NotAuthorizedToCancel();
     error AlreadySettled();
+    error NothingToSettle();
+    error InsufficientDirectPayment(uint256 balance, uint256 due);
 
     // ───────────────────────────── Events ─────────────────────────────
     event Funded(address indexed buyer, address refundAddress, uint128 principal);
@@ -72,6 +75,7 @@ contract InvoiceEscrow {
         uint16 discountBps
     );
     event Cancelled(address indexed caller, uint128 refunded);
+    event SettledDirect(address indexed caller, address payoutAddress, uint256 amount, uint16 discountBps);
 
     uint256 private constant MAX_TIERS = 10;
     uint256 private constant BPS_DENOMINATOR = 10_000;
@@ -244,6 +248,21 @@ contract InvoiceEscrow {
             ITIP20(_token).transferWithMemo(_refund(), refunded, _invoiceRef);
         }
         emit Cancelled(msg.sender, refunded);
+    }
+
+    /// @notice Settle an Active invoice from tokens paid straight into this clone (e.g. an MPP charge).
+    /// @dev Permissionless. `bps = activeDiscount(block.timestamp)`;
+    ///      `due = principal - principal * bps / 10_000` (the discount is floored, as in `triggerPayment`);
+    ///      `balance = token.balanceOf(address(this))`.
+    ///      Checks, in order: `status != Active` → `NotActive`; `balance == 0` → `NothingToSettle` (even for the
+    ///      seller); `msg.sender != seller && balance < due` → `InsufficientDirectPayment(balance, due)`. The
+    ///      seller may settle for less than `due`.
+    ///      Effects (before the transfer): `status = Paid`. `buyer` and `refundAddress` stay address(0).
+    ///      Interaction: `transferWithMemo(payoutAddress, balance, invoiceRef)` (payout resolved). The whole
+    ///      balance is forwarded, so any overpayment goes to the payout address.
+    ///      Emits `SettledDirect(msg.sender, payout, balance, bps)`.
+    function settleDirect() external {
+        revert("unimplemented");
     }
 
     // ───────────────────────────── Reads ──────────────────────────────

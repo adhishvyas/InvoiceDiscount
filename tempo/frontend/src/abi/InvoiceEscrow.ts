@@ -191,6 +191,13 @@ export const invoiceEscrowAbi = [
   },
   {
     "type": "function",
+    "name": "settleDirect",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
     "name": "triggerPayment",
     "inputs": [],
     "outputs": [],
@@ -284,6 +291,37 @@ export const invoiceEscrowAbi = [
     "anonymous": false
   },
   {
+    "type": "event",
+    "name": "SettledDirect",
+    "inputs": [
+      {
+        "name": "caller",
+        "type": "address",
+        "indexed": true,
+        "internalType": "address"
+      },
+      {
+        "name": "payoutAddress",
+        "type": "address",
+        "indexed": false,
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "indexed": false,
+        "internalType": "uint256"
+      },
+      {
+        "name": "discountBps",
+        "type": "uint16",
+        "indexed": false,
+        "internalType": "uint16"
+      }
+    ],
+    "anonymous": false
+  },
+  {
     "type": "error",
     "name": "AlreadyInitialized",
     "inputs": []
@@ -307,6 +345,22 @@ export const invoiceEscrowAbi = [
     "type": "error",
     "name": "EmptyInvoiceRef",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "InsufficientDirectPayment",
+    "inputs": [
+      {
+        "name": "balance",
+        "type": "uint256",
+        "internalType": "uint256"
+      },
+      {
+        "name": "due",
+        "type": "uint256",
+        "internalType": "uint256"
+      }
+    ]
   },
   {
     "type": "error",
@@ -341,6 +395,11 @@ export const invoiceEscrowAbi = [
   {
     "type": "error",
     "name": "NotTIP20",
+    "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "NothingToSettle",
     "inputs": []
   },
   {

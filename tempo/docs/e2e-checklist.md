@@ -90,3 +90,49 @@ For every transfer listed, open the tx and check the `TransferWithMemo` event. T
 - [ ] Browser console has no unexpected errors during the run.
 - [ ] Notes on anything surprising (wallet UX, sponsor failures, RPC errors): `____`
 - [ ] Every box above is ticked with a tx hash. Then mark I1 completed in [`plan/implementation-dag.md`](plan/implementation-dag.md) and move on to D1.
+
+## 8. MPP pay now (I1–I2 of [`plan/mpp-pay-now-dag.md`](plan/mpp-pay-now-dag.md); MPP spec §6.3)
+
+Needs the interface-v2 factory above; invoices from the v1 factory get a 404 from the server.
+
+### 8.0 Setup
+
+- [ ] `tempo/mpp-server/.env` from `.env.example`, with `FACTORY_ADDRESS=0x1A6934651E179448e131C453E96Ee90856b65fF8`. The settler is funded: `cast rpc tempo_fundAddress <SETTLER> --rpc-url https://rpc.moderato.tempo.xyz`. The server prints the settler's address at startup.
+- [ ] `tempo/frontend/.env`: `VITE_FACTORY_ADDRESS=0x1A6934651E179448e131C453E96Ee90856b65fF8`, `VITE_FACTORY_DEPLOY_BLOCK=40362093`, `VITE_MPP_SERVER_URL=http://localhost:8787`.
+- [ ] `cd tempo/mpp-server && corepack pnpm dev`, then `curl localhost:8787/health` returns `{"ok":true}`.
+
+### 8.1 Server smoke (I1)
+
+INV-M0, 100.00 AlphaUSD, created by the seller, tiers as in section 0.
+
+- [ ] `curl -i -X POST localhost:8787/invoices/<INV-M0>/pay` returns 402. The Challenge's `amount` (base units, 6 decimals) matches the page's "If paid now" payout, or the next tier's within 3 minutes of a cutoff.
+- [ ] `curl -i -X POST localhost:8787/invoices/0x19d0ffbca47bfdcfe83ef9ebc6220860175b62ab/pay` (a v1 clone) returns 404.
+- [ ] A throwaway payer key funded with `tempo_fundAddress`, then `PAYER_PRIVATE_KEY=0x… node i1-pay.mjs <INV-M0>`. The script is in the session scratchpad `mppx-spike/`, so copy it out to keep it. The body has `settled: true`. Transfer tx: `____` Settle tx: `____`
+- [ ] `getInvoice()` shows Paid. On the explorer, the settle tx forwards the whole balance to the payout address with the `invoiceRef` memo.
+
+### 8.2 Pay now via MPP in the browser (INV-M1)
+
+- [ ] As the seller, Pay now is **not** shown on INV-M1. Neither is it with MetaMask connected.
+- [ ] As the buyer (Tempo Wallet), click Pay now via MPP. The confirm box shows the amount, the discount and a "valid until" time about 2 minutes out.
+- [ ] Confirm. The wallet asks once (a sponsored transfer) and the page shows "Paid and settled". The status is Paid.
+- [ ] MPP exchange panel: the Challenge shows 402, the raw `WWW-Authenticate`, and the right amount, token and recipient (INV-M1). The Credential shows tempo / charge, push, and the transfer tx. The Receipt shows the raw `Payment-Receipt` with `reference` equal to that tx. Settlement shows the `settleDirect()` tx. Transfer: `____` Settle: `____`
+- [ ] History: "Paid X directly" by the buyer, then "Settled directly". Settlement shows the payout and "Payer discount (… tier)".
+- [ ] Browser console: no request to the server other than the two POSTs (the Accounts SDK did not auto-pay).
+
+### 8.3 Finish settlement (INV-M2)
+
+Make `settleDirect()` fail after the charge: restart the server with an **unfunded** settler key (`SETTLER_PRIVATE_KEY=<fresh key> corepack pnpm dev`).
+
+- [ ] Pay now via MPP as the buyer. The panel's Settlement step shows the error, and the status stays Active. Transfer: `____`
+- [ ] Finish settlement appears, for the buyer and for the seller, and Pay now is gone. Click it. Status Paid. Tx: `____`
+- [ ] Restart the server with the funded settler.
+
+### 8.4 Accept and settle (INV-M3)
+
+- [ ] Underpay INV-M3 with a plain transfer of 50.00: `cast send 0x20c0000000000000000000000000000000000001 "transfer(address,uint256)" <INV-M3> 50000000 --rpc-url https://rpc.moderato.tempo.xyz --private-key <payer>`. Tx: `____`
+- [ ] The seller sees Accept and settle (not Finish settlement); the buyer sees neither. The warning reads "You will receive 50.00 AlphaUSD instead of …".
+- [ ] Accept. Status Paid, and the payout received 50.00. Tx: `____`
+
+### 8.5 Memos
+
+- [ ] INV-M0, INV-M1, INV-M2 and INV-M3: each settle tx's `TransferWithMemo` (escrow → payout) memo decodes to the invoice reference.

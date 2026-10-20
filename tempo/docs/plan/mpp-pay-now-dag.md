@@ -160,15 +160,21 @@ Apply S1's outcomes to the MPP spec (§4.3, §5.1, §9) and mark §9 items as re
 
 ### C1 — Interface v2 freeze
 
+> **Status:** ✅ **Completed** 2026-10-19, tag `tempo-interface-v2`. Existing 103 tests green; ABI diff is the four additions only.
+
 See [Interface freeze v2](#interface-freeze-v2-node-c1).
 
 ### C2 — `settleDirect` logic (main session)
+
+> **Status:** ✅ **Completed** 2026-10-19. Two smoke tests in `test/smoke/`; 105 tests green.
 
 Implement MPP spec §3.1 in `InvoiceEscrow.sol`, reusing `_activeDiscount`, `_payout()` and `BPS_DENOMINATOR`. `due` uses the same rounding as `triggerPayment` (`principal - principal * bps / 10_000`). No new storage. Main-session smoke checks go in `test/smoke/` only; it doesn't read `test/unit/` until M1.
 
 **Verify:** `forge build`; a smoke test that transfers `due` into a clone and calls `settleDirect` from a stranger; `forge test` shows the existing suite still green.
 
 ### T1 — `settleDirect` tests, red against stubs (Sonnet sub-agent)
+
+> **Status:** 🔄 Running (started 2026-10-19)
 
 Agent tool with `model: "sonnet"`, `isolation: "worktree"`, branched from `tempo-interface-v2`. Brief: the base plan's [brief](implementation-dag.md#brief-for-the-sub-agent-paste-as-the-agent-prompt), with these inputs instead: the MPP spec §3 and §6.1, the v2 stubs, and `test/unit/Base.t.sol` (extend it, don't fork it: add the `SettledDirect` event mirror). Write a new `test/unit/InvoiceEscrowSettleDirect.t.sol` with the 8 tests in §6.1 plus boundaries: exact `due` vs `due - 1`, `due` at 0 bps and 10_000 bps (`due == 0`, so any positive balance settles), a seller calling with balance 0, the `TransferWithMemo` event's arguments, and `buyer`/`refundAddress` still zero in `getInvoice()` after settling. Spec questions go in `test/SPEC_QUESTIONS.md` under a new "MPP" heading. Every `expectRevert` names the exact selector.
 

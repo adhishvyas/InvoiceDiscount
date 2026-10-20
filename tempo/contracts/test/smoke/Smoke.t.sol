@@ -85,6 +85,30 @@ contract SmokeTest is Test {
         assertEq(token.balanceOf(buyer), PRINCIPAL);
     }
 
+    function test_settleDirectByStranger() public {
+        InvoiceEscrow inv = _create();
+        vm.warp(start + 5 days);
+        vm.prank(buyer);
+        token.transfer(address(inv), 85_000e6);
+        vm.expectEmit(address(token));
+        emit ITIP20.TransferWithMemo(address(inv), treasury, 85_000e6, REF);
+        vm.prank(makeAddr("stranger"));
+        inv.settleDirect();
+        assertEq(uint8(inv.getInvoice().status), uint8(Status.Paid));
+        assertEq(token.balanceOf(address(inv)), 0);
+    }
+
+    function test_settleDirectUnderpaidOnlySeller() public {
+        InvoiceEscrow inv = _create();
+        vm.prank(buyer);
+        token.transfer(address(inv), 1e6);
+        vm.expectRevert(abi.encodeWithSelector(InvoiceEscrow.InsufficientDirectPayment.selector, 1e6, 85_000e6));
+        inv.settleDirect();
+        vm.prank(seller);
+        inv.settleDirect();
+        assertEq(token.balanceOf(treasury), 1e6);
+    }
+
     function test_directInitializeReverts() public {
         InvoiceEscrow inv = _create();
         DiscountTier[] memory none = new DiscountTier[](0);

@@ -262,7 +262,22 @@ contract InvoiceEscrow {
     ///      balance is forwarded, so any overpayment goes to the payout address.
     ///      Emits `SettledDirect(msg.sender, payout, balance, bps)`.
     function settleDirect() external {
-        revert("unimplemented");
+        if (_status != Status.Active) revert NotActive();
+
+        uint16 bps = _activeDiscount(uint64(block.timestamp));
+        uint256 principal = _principal;
+        uint256 due = principal - (principal * bps) / BPS_DENOMINATOR;
+        ITIP20 token = ITIP20(_token);
+        uint256 balance = token.balanceOf(address(this));
+        if (balance == 0) revert NothingToSettle();
+        if (msg.sender != _seller && balance < due) revert InsufficientDirectPayment(balance, due);
+
+        address payout = _payout();
+        _status = Status.Paid;
+
+        token.transferWithMemo(payout, balance, _invoiceRef);
+
+        emit SettledDirect(msg.sender, payout, balance, bps);
     }
 
     // ───────────────────────────── Reads ──────────────────────────────

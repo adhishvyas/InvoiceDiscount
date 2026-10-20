@@ -26,6 +26,7 @@ abstract contract Base is Test {
         uint16 discountBps
     );
     event Cancelled(address indexed caller, uint128 refunded);
+    event SettledDirect(address indexed caller, address payoutAddress, uint256 amount, uint16 discountBps);
     event InvoiceCreated(
         address indexed invoice,
         address indexed seller,

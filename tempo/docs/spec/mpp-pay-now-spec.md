@@ -12,8 +12,8 @@ Seen as an MPP flow:
 
 1. The buyer asks the MPP server to pay invoice `0x…`.
 2. The server replies **`402 Payment Required`** with a **Challenge**. The Challenge's `amount` is the principal less the current discount, its `currency` is the invoice's token, and its `recipient` is the invoice clone.
-3. The buyer's wallet signs a TIP-20 transfer and retries the request with it as a **Credential**.
-4. The server broadcasts the transfer, then calls `settleDirect()` on the invoice. That call marks the invoice Paid and forwards the funds to the seller's payout address, with the invoice reference as the memo.
+3. The buyer's wallet broadcasts a sponsored TIP-20 transfer into the clone and retries the request with its tx hash as a **Credential** ("push" mode, see §2).
+4. The server checks the transfer on-chain, then calls `settleDirect()` on the invoice. That call marks the invoice Paid and forwards the funds to the seller's payout address, with the invoice reference as the memo.
 5. The server returns **`200 OK`** with a **Receipt**.
 
 The main point of the PoC is to learn MPP. The UI therefore shows the Challenge before payment and the Receipt after it (§5.2).
@@ -32,7 +32,8 @@ The existing fund → trigger path stays. An Active invoice can be settled eithe
 | Memo | The buyer's transfer carries the **MPP attribution memo** (set by `mppx`, bound to the Challenge). The forward transfer from the clone carries `invoiceRef` | Tempo MPP doesn't support custom top-level memos. The forward transfer restores reconciliation by invoice reference |
 | Pricing | Challenge amount = principal − discount, using the **smallest discount that applies at any moment in the quote window** (§4.2) | Ensures the payment still covers the amount due if a tier cutoff passes before `settleDirect()` runs |
 | Challenge expiry | 2 minutes | A short window keeps the quote close to the live tier |
-| Gas for the payer | **Sponsored**: `tempo.charge({ feePayer: 'https://sponsor.moderato.tempo.xyz' })`, the same public Moderato relay the frontend already uses | Matches base §2. The buyer needs only the invoice token |
+| Credential mode | **Push**: the wallet broadcasts the transfer and the Credential carries its tx hash | The `mppx` client picks push for wallet (`json-rpc`) accounts. The server never holds a signed payer transaction |
+| Gas for the payer | **Sponsored by the wallet**: the Tempo Wallet connector's existing `feePayer: 'https://sponsor.moderato.tempo.xyz'` applies to the transfer the wallet sends. The server sets no `feePayer` | Matches base §2. The buyer needs only the invoice token |
 | Gas for `settleDirect()` | Paid by the server's **settler key**, which holds testnet stablecoin for fees | A server-side write. The key has no special rights in the contract |
 | Client | **Browser only**: a "Pay now via MPP" button on InvoiceDetail, Tempo Wallet only | User decision. Injected wallets are out of scope (§8) |
 | Server | New `tempo/mpp-server/`: a small Node HTTP server using `mppx/server` and `viem` | MPP is HTTP-native and needs something to issue 402s. Today the app has no backend |
@@ -109,12 +110,12 @@ The implementation's bytecode changes, so this needs a **new factory deployment*
 
 ```ts
 const mppx = Mppx.create({
-  methods: [tempo.charge({ testnet: true, feePayer: 'https://sponsor.moderato.tempo.xyz' })],
+  methods: [tempo.charge({ testnet: true, currency: ALPHA_USD })],
   secretKey: process.env.MPP_SECRET_KEY,
 });
 ```
 
-`testnet: true` selects chain ID `42431` (Moderato).
+`testnet: true` selects chain ID `42431` (Moderato). The `currency` here is only a placeholder that makes `tempo.charge` create a single offer (without it, it creates two). Each request overrides it with the invoice's token.
 
 ### 4.2 Quote
 
@@ -133,21 +134,24 @@ On every request, with or without a Credential:
 1. `address` must be a valid address → otherwise `400`.
 2. The code at `address` must be the EIP-1167 clone runtime pointing to `factory.implementation()` → otherwise `404`. This stops a crafted URL from steering a payment to an arbitrary contract.
 3. `getInvoice()`: `status` must be `Active` → otherwise `409` with the current status.
-4. Compute the quote (§4.2), then call:
+4. Work out the charge's `amount` and `description`:
+   - **First request (no Credential):** compute the quote (§4.2).
+   - **Retry (with a Credential):** if `Credential.fromRequest(request)` parses and `Challenge.verify(credential.challenge, { secretKey })` passes, reuse the **echoed** Challenge's `amount` and `description`. `mppx` pins both on the retry, so a quote recomputed seconds later could differ near a tier boundary, and `mppx` would then reject a valid payment. The HMAC proves this server issued the echoed values, `mppx` still pins `recipient` and `currency` to this request, and it enforces `expires`.
+5. Call:
 
 ```ts
 const result = await mppx.charge({
-  amount: formatUnits(amount, 6),
+  amount,                  // display units, e.g. formatUnits(quoteAmount, 6)
   currency: invoice.token,
   recipient: address,
   expires: Expires.minutes(2),
-  description: `Invoice ${decodeRef(invoice.invoiceRef)}: ${quoteBps / 100}% early-payment discount`,
+  description,             // `Invoice ${decodeRef(invoice.invoiceRef)}: ${quoteBps / 100}% early-payment discount`
 })(request);
 if (result.status === 402) return result.challenge;
 ```
 
-5. After a successful charge (the transfer has been broadcast and confirmed), send `settleDirect()` from the settler key and wait for the receipt.
-6. Return `result.withReceipt(Response.json(body))`, where:
+6. After a successful charge (`mppx` has found the wallet's transfer on-chain and checked it), send `settleDirect()` from the settler key and wait for the receipt.
+7. Return `result.withReceipt(Response.json(body))`, where:
 
 ```ts
 {
@@ -167,7 +171,7 @@ If `settleDirect()` reverts, the payment has still been made. The server returns
 
 The browser calls the server cross-origin, so:
 
-- Allow request header `Authorization`.
+- Allow request headers `Authorization` and `Accept-Payment`. The `mppx` client sends `Accept-Payment` on every request when it isn't polyfilling `fetch`.
 - Expose response headers `WWW-Authenticate` and `Payment-Receipt`.
 - Allow origin `ALLOWED_ORIGIN`.
 
@@ -189,7 +193,10 @@ New `.env` key: `VITE_MPP_SERVER_URL`.
 | **Finish settlement** | `status == Active` and the clone's token balance ≥ the amount due now | `invoice.settleDirect()`, sponsored. Anyone may click it |
 | **Accept and settle** | the user is the seller, `status == Active`, and 0 < clone balance < the amount due now | Warns "You will receive X instead of Y", then `invoice.settleDirect()` |
 
-Create the `mppx` client with `polyfill: false` so the global `fetch` isn't patched.
+Client setup:
+
+- **Turn off the Accounts SDK's built-in MPP:** `tempoWallet({ feePayer: SPONSOR_URL, mpp: false })`. That option defaults to on and patches the global `fetch` to pay any 402 automatically, which would skip the confirm step.
+- Create our own `mppx` client with `polyfill: false`. Use `tempo.charge({ getClient, expectedRecipients: [invoice], currencies: [invoice.token], maxAtomicAmount: String(principal) })`, where `getClient` comes from `(await connector.getProvider()).getMppxParameters()`. The allowlists make the client refuse a Challenge that pays anyone other than this invoice, in another token, or more than the principal.
 
 ### 5.2 "MPP exchange" panel
 
@@ -198,7 +205,7 @@ A collapsible panel under the Pay Now action, so the user can see the protocol a
 | Step | Shows |
 |---|---|
 | Challenge | The 402 status, the raw `WWW-Authenticate` header, and the decoded request (`amount`, `currency`, `recipient`, `expires`, `description`) |
-| Credential | That a Credential was sent, with method and intent. The signed transaction itself isn't shown |
+| Credential | That a Credential was sent, with method, intent and mode (push), and the transfer's tx hash linked to the explorer |
 | Receipt | The raw `Payment-Receipt` header, decoded (`method`, `reference`, `status`, `timestamp`), with `reference` linked to the explorer |
 | Settlement | `settleTx` linked to the explorer, or the `settleError` |
 
@@ -257,12 +264,12 @@ Add a section to [`../e2e-checklist.md`](../e2e-checklist.md):
 
 ---
 
-## 9. To verify before implementing
+## 9. Verified before implementing
 
-These follow from the MPP docs but haven't been tried:
+Resolved on 2026-10-19 against `mppx` 0.13.5. Details are in [`verification-notes.md`](verification-notes.md#mpp-pay-now-spike-s1-of-planmpp-pay-now-dagmd) (items 1–5), and the outcomes are applied above:
 
-1. **Client with the wagmi `tempoWallet` connector.** The `mppx` docs show the client with an Accounts SDK `Provider` (`getAccount({ signable: true })`, `getClient`) or a local viem account. Confirm that the frontend's wagmi connector can supply a signing account. Otherwise create an Accounts SDK `Provider({ mpp: false })` for this flow.
-2. **Credential re-check vs. a fresh quote.** If `mppx` checks a Credential against a request rebuilt from the handler's arguments on the retry, a quote recomputed seconds later could differ near a boundary and be rejected. In that case the server must rebuild the quote from the echoed Challenge, or the client must accept one extra 402 round trip.
-3. **Sponsored "pull" Credential from a passkey wallet.** Confirm that Tempo Wallet can sign without broadcasting, so the server co-signs with the fee payer and broadcasts. If it can only broadcast ("push"), drop `feePayer` and rely on the wallet's own sponsorship.
-4. **Header names for CORS.** Confirm `WWW-Authenticate` / `Authorization` / `Payment-Receipt` against the `mppx` version installed.
-5. **Clone code check.** Confirm the exact 45-byte EIP-1167 runtime (`363d3d373d3d3d363d73<impl>5af43d82803e903d91602b57fd5bf3`) against a deployed clone.
+1. **Client with the wagmi `tempoWallet` connector:** works through the provider's `getMppxParameters().getClient` (§5.1). The provider's built-in MPP must be turned off (`mpp: false`).
+2. **Credential re-check vs. a fresh quote:** `mppx` pins `amount` and `description`, so the retry reuses the echoed Challenge's values (§4.3 step 4).
+3. **Sponsored pull Credential:** not used. The wallet pushes a transfer sponsored by its own fee payer, and the server has no `feePayer` (§2). The first live payment (plan I1/I2) confirms this with a passkey.
+4. **CORS headers:** `Accept-Payment` is also sent (§4.4).
+5. **Clone code:** confirmed against a deployed clone.

@@ -323,6 +323,8 @@ Add the MPP spec §6.3 section to [`../e2e-checklist.md`](../e2e-checklist.md), 
 
 ### D1 — Docs
 
+> **Status:** ✅ **Completed** 2026-10-20, ahead of I1/I2 at the user's request: `mpp-server/README.md` (including the `localhost` vs `127.0.0.1` CORS trap hit in testing), Tempo commands in the root `CLAUDE.md`, spec status changed to implemented with the e2e run pending.
+
 - `tempo/mpp-server/README.md`: env vars, `corepack pnpm dev`, `corepack pnpm test`.
 - Root `CLAUDE.md`: the server's build/test/run commands under Architecture.
 - MPP spec status: draft → implemented.

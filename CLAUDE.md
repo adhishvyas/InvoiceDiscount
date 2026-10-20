@@ -79,3 +79,20 @@ This is a smart contract project. When a development framework is chosen and sca
 - Network configuration (local, testnet, mainnet)
 - Any off-chain components (frontend, backend API, indexer)
 
+
+### Tempo (`tempo/`)
+
+Toolchain: Foundry (`export PATH=$HOME/.foundry/bin:$PATH`) and pnpm via corepack (`COREPACK_ENABLE_DOWNLOAD_PROMPT=0 corepack pnpm …`). In WSL, `npm`/`npx` resolve to the Windows binaries and fail, so use the pnpm scripts.
+
+- `tempo/contracts/`: `InvoiceFactory` deploys one EIP-1167 clone of `InvoiceEscrow` per invoice. The interface is frozen at tag `tempo-interface-v2`; changing it needs approval and a new tag.
+  - `forge build`, `forge test` (unit and smoke tests; fork tests are excluded)
+  - Fork tests: `TEMPO_RPC_URL=https://rpc.moderato.tempo.xyz FOUNDRY_PROFILE=fork forge test`
+  - Deploy (the user broadcasts): `forge script script/Deploy.s.sol --rpc-url https://rpc.moderato.tempo.xyz --account tempo-deployer --broadcast --verify --verifier-url https://contracts.tempo.xyz --tempo.fee-token 0x20c0000000000000000000000000000000000001`. Addresses go in `deployments/moderato.json`.
+- `tempo/frontend/`: React + wagmi + Accounts SDK (Tempo Wallet). `.env` from `.env.example`.
+  - `corepack pnpm dev` (http://localhost:5173), `build`, `lint`, `test`
+  - `corepack pnpm sync-abi`: regenerates the ABIs in `frontend/src/abi/` and `mpp-server/src/abi/` after a contract change
+- `tempo/mpp-server/`: Hono + `mppx` server for Pay now via MPP; see its [README](tempo/mpp-server/README.md). `.env` from `.env.example`.
+  - `corepack pnpm dev` (port 8787), `test`, `typecheck`
+  - `ALLOWED_ORIGIN` must match the frontend's origin exactly (`localhost`, not `127.0.0.1`).
+
+Network: Moderato testnet, chain 42431, RPC `https://rpc.moderato.tempo.xyz`, explorer `https://explore.testnet.tempo.xyz`. Specs, plans and the e2e checklist are in `tempo/docs/`.

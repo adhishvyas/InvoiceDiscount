@@ -1,6 +1,6 @@
 # InvoiceDiscount on Tempo: Pay Now via MPP
 
-> Status: draft, October 2026. Extends [`invoice-discount-spec.md`](invoice-discount-spec.md) (the "base spec"). Section references like "base §3.5" point there.
+> Status: implemented, October 2026 (contract `settleDirect` at tag `tempo-interface-v2`, factory `0x1A6934651E179448e131C453E96Ee90856b65fF8` on Moderato; server in [`../../mpp-server/`](../../mpp-server/README.md); frontend Pay now). The Moderato end-to-end run ([`../e2e-checklist.md`](../e2e-checklist.md) §8) is still to do. §4.3 and §5.1 were amended during implementation; see [`../plan/mpp-pay-now-dag.md`](../plan/mpp-pay-now-dag.md). Extends [`invoice-discount-spec.md`](invoice-discount-spec.md) (the "base spec"). Section references like "base §3.5" point there.
 
 ---
 

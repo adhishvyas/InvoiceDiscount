@@ -1,12 +1,14 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { useParams } from 'react-router-dom';
 import { encodeFunctionData, erc20Abi, isAddress, zeroAddress, type Address } from 'viem';
 import { useAccount, useReadContract, useReadContracts } from 'wagmi';
 import { invoiceEscrowAbi } from '../abi/InvoiceEscrow';
-import { EXPLORER_URL } from '../config';
+import { EXPLORER_URL, MPP_SERVER_URL } from '../config';
 import { useFund } from '../hooks/useFund';
 import { useInvoiceHistory } from '../hooks/useInvoiceHistory';
 import { useInvoiceWrite, type WriteState } from '../hooks/useInvoiceWrite';
+import { useMppPay, type MppExchange } from '../hooks/useMppPay';
+import { useWalletMode } from '../hooks/useWalletMode';
 import { visibleActions } from '../lib/actions';
 import type { InvoiceHistory } from '../lib/history';
 import { decodeRef } from '../lib/ref';
@@ -17,6 +19,11 @@ import { fromUnits } from '../lib/units';
 const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`;
 const bpsToPercent = (bps: number) => `${(bps / 100).toString()}%`;
 const formatDate = (unix: bigint) => new Date(Number(unix) * 1000).toLocaleString();
+const txLink = (hash: string) => (
+  <a href={`${EXPLORER_URL}/tx/${hash}`} target="_blank" rel="noreferrer" className="font-mono underline break-all">
+    {hash}
+  </a>
+);
 
 function Party({ label, address, account }: { label: string; address: Address; account?: Address }) {
   const none = address === zeroAddress;
@@ -161,6 +168,69 @@ function Settlement({
   return null;
 }
 
+/** The MPP exchange, step by step, so the protocol is visible (MPP spec §5.2). */
+function MppExchangePanel({ exchange, money }: { exchange: MppExchange; money: (units: bigint) => string }) {
+  const { challenge, credential, receipt, result } = exchange;
+  if (!challenge) return null;
+  const step = (title: string, body: ReactNode) => (
+    <div className="py-3 border-b border-slate-800 last:border-0">
+      <p className="text-xs uppercase tracking-widest text-slate-500 mb-1">{title}</p>
+      <div className="text-slate-300 space-y-1">{body}</div>
+    </div>
+  );
+  const raw = (header: string) => <pre className="text-xs text-slate-500 whitespace-pre-wrap break-all">{header}</pre>;
+  return (
+    <details className="mt-4 text-sm bg-slate-950 border border-slate-800 rounded-lg px-4 py-2">
+      <summary className="cursor-pointer text-slate-400 py-1">MPP exchange</summary>
+      {step(
+        `1. Challenge (${challenge.status} Payment Required)`,
+        <>
+          <p>
+            {challenge.method} / {challenge.intent}: {money(challenge.amount)} to <span className="font-mono">{short(challenge.recipient)}</span>
+          </p>
+          <p>Token <span className="font-mono">{challenge.currency}</span></p>
+          {challenge.description && <p>{challenge.description}</p>}
+          {challenge.expires && <p>Expires {new Date(challenge.expires).toLocaleTimeString()}</p>}
+          {raw(`WWW-Authenticate: ${challenge.header}`)}
+        </>,
+      )}
+      {credential &&
+        step(
+          '2. Credential',
+          <>
+            <p>
+              Sent: {credential.method} / {credential.intent}, {credential.type === 'hash' ? 'push (the wallet broadcast the transfer)' : credential.type}
+            </p>
+            {credential.hash && <p>Transfer {txLink(credential.hash)}</p>}
+          </>,
+        )}
+      {receipt &&
+        step(
+          '3. Receipt',
+          <>
+            <p>
+              {receipt.method}, {receipt.status}, {new Date(receipt.timestamp).toLocaleString()}
+            </p>
+            <p>Reference {txLink(receipt.reference)}</p>
+            {raw(`Payment-Receipt: ${receipt.header}`)}
+          </>,
+        )}
+      {result &&
+        step(
+          '4. Settlement',
+          result.settleTx && result.settled ? (
+            <p className="text-green-400">settleDirect() {txLink(result.settleTx)}</p>
+          ) : (
+            <p className="text-red-400">
+              settleDirect() failed{result.settleError ? `: ${result.settleError}` : ''}
+              {result.settleTx && <> ({txLink(result.settleTx)})</>}. The payment is in the invoice; use Finish settlement.
+            </p>
+          ),
+        )}
+    </details>
+  );
+}
+
 function WriteStatus({ state }: { state: WriteState }) {
   if (state.status === 'pending') return <p className="text-sm text-slate-400 mt-3">Waiting for confirmation…</p>;
   if (state.status === 'error') return <p className="text-sm text-red-400 mt-3">{state.message}</p>;
@@ -206,6 +276,13 @@ function Invoice({ invoice }: { invoice: Address }) {
     ] as const,
     query: { enabled: Boolean(token) },
   });
+  const { data: cloneBalance, refetch: refetchBalance } = useReadContract({
+    address: token ?? zeroAddress,
+    abi: erc20Abi,
+    functionName: 'balanceOf',
+    args: [invoice],
+    query: { enabled: Boolean(token) },
+  });
   const { data: bps } = useReadContract({
     address: invoice,
     abi: invoiceEscrowAbi,
@@ -217,6 +294,9 @@ function Invoice({ invoice }: { invoice: Address }) {
 
   const { state: fundState, fund, reset: resetFund } = useFund();
   const { state: txState, run, reset: resetTx } = useInvoiceWrite();
+  const walletMode = useWalletMode();
+  const mpp = useMppPay(invoice);
+  const [confirmAccept, setConfirmAccept] = useState(false);
 
   if (error) return <main className="max-w-xl mx-auto px-6 py-16 text-red-400">Could not read this invoice: {error.message}</main>;
   if (!inv || !meta) return <main className="max-w-xl mx-auto px-6 py-16 text-slate-400">Loading…</main>;
@@ -224,17 +304,22 @@ function Invoice({ invoice }: { invoice: Address }) {
   const [symbol, decimals] = meta;
   const status = inv.status as StatusValue;
   const money = (units: bigint) => `${fromUnits(units, decimals)} ${symbol}`;
+  const open = status === Status.Active || status === Status.Funded;
+  const discount = bps ?? 0;
+  const split = computeSplit(inv.principal, discount);
+  const balance = cloneBalance ?? 0n;
   const actions = visibleActions({
     account,
+    walletMode,
+    mppEnabled: MPP_SERVER_URL !== undefined,
     seller: inv.seller,
     buyer: inv.buyer,
     status,
     dueDate: inv.dueDate,
     now: BigInt(now),
+    cloneBalance: balance,
+    dueNow: split.toSeller,
   });
-  const open = status === Status.Active || status === Status.Funded;
-  const discount = bps ?? 0;
-  const split = computeSplit(inv.principal, discount);
   const activeTier = inv.tiers.findIndex((t) => BigInt(now) < t.cutoff);
 
   const refundTarget = refundInput.trim() === '' ? account : (refundInput.trim() as Address);
@@ -245,10 +330,21 @@ function Invoice({ invoice }: { invoice: Address }) {
     const receipts = await fund(invoice, inv.token, inv.principal, (refundInput.trim() || zeroAddress) as Address);
     if (receipts) refetch();
   };
-  const onCall = async (functionName: 'triggerPayment' | 'cancel') => {
+  const onCall = async (functionName: 'triggerPayment' | 'cancel' | 'settleDirect') => {
     const receipts = await run([{ to: invoice, data: encodeFunctionData({ abi: invoiceEscrowAbi, functionName }) }]);
-    if (receipts) refetch();
+    if (receipts) {
+      refetch();
+      refetchBalance();
+    }
   };
+  const onPay = async () => {
+    const challenge = mpp.exchange.challenge;
+    if (!challenge) return;
+    await mpp.pay(inv.token, challenge.amount);
+    refetch();
+    refetchBalance();
+  };
+  const quote = mpp.exchange.challenge;
 
   const payoutLine = `${money(split.toSeller)} to ${short(inv.payoutAddress)}`;
   const refundLine = split.refund > 0n ? `${money(split.refund)} refunded to ${short(inv.refundAddress)}` : 'no refund';
@@ -324,6 +420,109 @@ function Invoice({ invoice }: { invoice: Address }) {
           <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-widest mb-3">If paid now ({bpsToPercent(discount)} off)</h2>
           <p>{payoutLine}</p>
           <p className="text-slate-400">{status === Status.Funded ? refundLine : split.refund > 0n ? `${money(split.refund)} refunded to the buyer` : 'no refund'}</p>
+        </section>
+      )}
+
+      {(actions.payNow || mpp.exchange.challenge) && (
+        <section className="bg-slate-900 border border-slate-800 rounded-xl p-5">
+          <h2 className="font-semibold mb-1">Pay now via MPP</h2>
+          <p className="text-sm text-slate-400">
+            Pay the invoice directly from Tempo Wallet at the current discount. The seller is paid straight away; there is no escrow.
+          </p>
+          {mpp.state.status === 'quoted' && quote ? (
+            <div className="mt-4 border border-indigo-800 bg-indigo-950 rounded-lg p-4 text-sm">
+              <p>
+                Pay <span className="font-semibold">{money(quote.amount)}</span> now to invoice{' '}
+                <span className="font-mono">{decodeRef(inv.invoiceRef)}</span>.
+              </p>
+              {quote.description && <p className="text-slate-300">{quote.description}.</p>}
+              {quote.expires && <p className="text-slate-400">Quote valid until {new Date(quote.expires).toLocaleTimeString()}.</p>}
+              <div className="flex gap-3 mt-3">
+                <button
+                  onClick={() => void onPay()}
+                  className="bg-indigo-600 hover:bg-indigo-500 px-5 py-2 rounded-lg text-sm font-medium transition-colors"
+                >
+                  Confirm and pay
+                </button>
+                <button onClick={mpp.reset} className="bg-slate-700 hover:bg-slate-600 px-5 py-2 rounded-lg text-sm font-medium transition-colors">
+                  Back
+                </button>
+              </div>
+            </div>
+          ) : (
+            actions.payNow && (
+              <button
+                onClick={() => void mpp.quote()}
+                disabled={mpp.state.status === 'pending'}
+                className="mt-3 bg-indigo-600 hover:bg-indigo-500 px-5 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
+              >
+                {mpp.state.status === 'pending' ? 'Working…' : 'Pay now via MPP'}
+              </button>
+            )
+          )}
+          {mpp.state.status === 'error' && <p className="text-sm text-red-400 mt-3">{mpp.state.message}</p>}
+          {mpp.state.status === 'success' && mpp.exchange.result?.settled && <p className="text-sm text-green-400 mt-3">Paid and settled.</p>}
+          <MppExchangePanel exchange={mpp.exchange} money={money} />
+        </section>
+      )}
+
+      {(actions.finishSettlement || actions.acceptAndSettle) && (
+        <section className="bg-slate-900 border border-slate-800 rounded-xl p-5">
+          {actions.finishSettlement && (
+            <div>
+              <h2 className="font-semibold mb-1">Finish settlement</h2>
+              <p className="text-sm text-slate-400">
+                This invoice holds {money(balance)}, which covers the {money(split.toSeller)} due now. Settling forwards it all to{' '}
+                {short(inv.payoutAddress)} and closes the invoice. Anyone may do this.
+              </p>
+              <button
+                onClick={() => { resetTx(); void onCall('settleDirect'); }}
+                disabled={txState.status === 'pending'}
+                className="mt-3 bg-indigo-600 hover:bg-indigo-500 px-5 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
+              >
+                Finish settlement
+              </button>
+            </div>
+          )}
+          {actions.acceptAndSettle && (
+            <div>
+              <h2 className="font-semibold mb-1">Accept and settle</h2>
+              <p className="text-sm text-slate-400">
+                This invoice holds {money(balance)}, less than the {money(split.toSeller)} due now. You can accept it as payment in full.
+              </p>
+              {confirmAccept ? (
+                <div className="mt-3 border border-amber-800 bg-amber-950 rounded-lg p-4 text-sm">
+                  <p>
+                    You will receive <span className="font-semibold">{money(balance)}</span> instead of {money(split.toSeller)}, and the invoice
+                    closes as Paid.
+                  </p>
+                  <div className="flex gap-3 mt-3">
+                    <button
+                      onClick={() => { resetTx(); setConfirmAccept(false); void onCall('settleDirect'); }}
+                      disabled={txState.status === 'pending'}
+                      className="bg-amber-600 hover:bg-amber-500 px-5 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
+                    >
+                      Accept {money(balance)} and settle
+                    </button>
+                    <button
+                      onClick={() => setConfirmAccept(false)}
+                      className="bg-slate-700 hover:bg-slate-600 px-5 py-2 rounded-lg text-sm font-medium transition-colors"
+                    >
+                      Back
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setConfirmAccept(true)}
+                  className="mt-3 bg-slate-700 hover:bg-slate-600 px-5 py-2 rounded-lg text-sm font-medium transition-colors"
+                >
+                  Accept and settle
+                </button>
+              )}
+            </div>
+          )}
+          <WriteStatus state={txState} />
         </section>
       )}
 

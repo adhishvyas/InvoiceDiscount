@@ -190,14 +190,14 @@ New `.env` key: `VITE_MPP_SERVER_URL`.
 
 | Action | Shown when | Behaviour |
 |---|---|---|
-| **Pay now via MPP** | connected with **Tempo Wallet**, not the seller, `status == Active` | 1. `fetch` the endpoint with no Credential and read the Challenge from the 402 (`Challenge.fromHeaders`). 2. Show: "Pay **X AlphaUSD** now (Y% discount) to invoice `INV-…`. Quote valid until hh:mm:ss." 3. On confirm, call `mppx.fetch` (client `tempo.charge` with the connected account) to the same URL. It handles the 402, signs and retries. 4. Show the result and refetch `getInvoice` |
+| **Pay now via MPP** | connected with **Tempo Wallet**, not the seller, `status == Active`, and the clone's balance is below the amount due now (otherwise Finish settlement is offered, so nobody pays twice) | 1. `fetch` the endpoint with no Credential and read the Challenge from the 402 (`Challenge.fromHeaders`). 2. Show: "Pay **X AlphaUSD** now (Y% discount) to invoice `INV-…`. Quote valid until hh:mm:ss." 3. On confirm, call `mppx.fetch` (client `tempo.charge` with the connected account) to the same URL. It handles the 402, signs and retries. 4. Show the result and refetch `getInvoice` |
 | **Finish settlement** | `status == Active` and the clone's token balance ≥ the amount due now | `invoice.settleDirect()`, sponsored. Anyone may click it |
 | **Accept and settle** | the user is the seller, `status == Active`, and 0 < clone balance < the amount due now | Warns "You will receive X instead of Y", then `invoice.settleDirect()` |
 
 Client setup:
 
 - **Turn off the Accounts SDK's built-in MPP:** `tempoWallet({ feePayer: SPONSOR_URL, mpp: false })`. That option defaults to on and patches the global `fetch` to pay any 402 automatically, which would skip the confirm step.
-- Create our own `mppx` client with `polyfill: false`. Use `tempo.charge({ getClient, expectedRecipients: [invoice], currencies: [invoice.token], maxAtomicAmount: String(principal) })`, where `getClient` comes from `(await connector.getProvider()).getMppxParameters()`. The allowlists make the client refuse a Challenge that pays anyone other than this invoice, in another token, or more than the principal.
+- Create our own `mppx` client with `polyfill: false`. Use `tempo.charge({ getClient, expectedRecipients: [invoice], currencies: [invoice.token], maxAtomicAmount: String(confirmedAmount) })`, where `getClient` comes from `(await connector.getProvider()).getMppxParameters()`. The allowlists make the client refuse a Challenge that pays anyone other than this invoice, in another token, or more than the quote the user confirmed. That matters because the paid request gets a fresh 402 of its own.
 
 ### 5.2 "MPP exchange" panel
 

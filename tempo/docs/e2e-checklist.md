@@ -130,7 +130,7 @@ Make `settleDirect()` fail after the charge: restart the server with an **unfund
 ### 8.4 Accept and settle (INV-M3)
 
 - [ ] Underpay INV-M3 with a plain transfer of 50.00: `cast send 0x20c0000000000000000000000000000000000001 "transfer(address,uint256)" <INV-M3> 50000000 --rpc-url https://rpc.moderato.tempo.xyz --private-key <payer>`. Tx: `____`
-- [ ] The seller sees Accept and settle (not Finish settlement); the buyer sees neither. The warning reads "You will receive 50.00 AlphaUSD instead of …".
+- [ ] The seller sees Accept and settle (not Finish settlement). The buyer sees Pay now but neither settle action. The warning reads "You will receive 50.00 AlphaUSD instead of …".
 - [ ] Accept. Status Paid, and the payout received 50.00. Tx: `____`
 
 ### 8.5 Memos

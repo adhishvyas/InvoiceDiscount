@@ -31,3 +31,17 @@ The suite was also run against a private, throw-away reference implementation (k
 committed) written from the spec: all tests passed, and 20+ single-line mutations (flipped boundaries, removed checks,
 wrong memo, wrong refund destination, missing `if (refund > 0)`, rounding errors, ...) each made at least one test
 fail. Two tests (`test_ZeroAddressCaller_*`) fail against the naive `msg.sender == buyer` implementation on purpose.
+
+## MPP pay-now (settleDirect)
+
+Marked `// SPEC-QUESTION n` in `test/unit/InvoiceEscrowSettleDirect.t.sol`. Numbering restarts here.
+
+1. Is the payout address (or the buyer/payer) allowed the seller's underpayment override? Spec 3.1 and the NatSpec say only `msg.sender == seller`. Assumed: no. A non-seller payout address with `balance < due` gets `InsufficientDirectPayment`. Test: `test_BuyerAndPayoutAreNotSpecialCallers`.
+2. Does `settleDirect` care about the due date? Neither spec nor NatSpec has a due-date check, and the discount is 0 after the last cutoff. Assumed: it works after the due date at the full-principal price (`due == principal`). Test: `test_DueDatePassed_SettleStillWorksAtFullPrice`.
+3. (No marker.) The spec's bullet order and the NatSpec's "Checks, in order" agree. The tests pin that order: `NotActive` beats `NothingToSettle` beats `InsufficientDirectPayment` (`test_NotActiveWinsOverNothingToSettle`, `test_NothingToSettleWinsOverInsufficient`).
+4. (No marker.) The spec is silent on which events the clone emits besides `SettledDirect`. Assumed: no `Paid`, and exactly one memo transfer (`test_SettledDirectEvent_EmittedOnceWithCallerPayoutAmountBps`, `test_MemoTransferLog_Arguments`).
+5. (No marker.) Funds sent into a Cancelled/Funded/Paid clone stay stuck (spec 7). The tests assert `settleDirect` reverts `NotActive` and the balance is untouched.
+
+## Red check (settleDirect)
+
+Against the v2 stub every test in `InvoiceEscrowSettleDirect.t.sol` fails (37 of 37; the stub reverts with `Error(string)`, which no `expectRevert(selector)` accepts). Against a throw-away reference implementation written from the spec (not committed) all 37 pass.

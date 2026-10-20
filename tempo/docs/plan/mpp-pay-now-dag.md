@@ -231,6 +231,8 @@ Candidates are `t` and each cutoff `c` with `t < c ≤ t + window`. The function
 
 ### V4 — Pay endpoint (`POST /invoices/:address/pay`) + tests
 
+> **Status:** ✅ **Completed** 2026-10-19 (4 tests; 20 server tests in all). Differs from step 2: the quote's `discountBps` rides in the Challenge `meta`, which the HMAC covers, and the retry rebuilds `description` from it (spec §4.3 amended). A throw-away probe confirmed that a retry still reaches transfer verification after the fresh quote has moved past a cutoff.
+
 MPP spec §4.3, in `src/pay.ts`, mounted in `index.ts`:
 
 1. `isAddress` → 400. `isClone` → 404. `getInvoice().status === Active` → else 409 with the status name.

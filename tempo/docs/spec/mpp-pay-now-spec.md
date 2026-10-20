@@ -136,7 +136,7 @@ On every request, with or without a Credential:
 3. `getInvoice()`: `status` must be `Active` → otherwise `409` with the current status.
 4. Work out the charge's `amount` and `description`:
    - **First request (no Credential):** compute the quote (§4.2).
-   - **Retry (with a Credential):** if `Credential.fromRequest(request)` parses and `Challenge.verify(credential.challenge, { secretKey })` passes, reuse the **echoed** Challenge's `amount` and `description`. `mppx` pins both on the retry, so a quote recomputed seconds later could differ near a tier boundary, and `mppx` would then reject a valid payment. The HMAC proves this server issued the echoed values, `mppx` still pins `recipient` and `currency` to this request, and it enforces `expires`.
+   - **Retry (with a Credential):** if `Credential.fromRequest(request)` parses and `Challenge.verify(credential.challenge, { secretKey })` passes, reuse the **echoed** Challenge's `amount` and its `meta.discountBps` (the first request puts `quoteBps` there). `mppx` pins the amount on the retry, so a quote recomputed seconds later could differ near a tier boundary, and `mppx` would then reject a valid payment. The HMAC covers `request` and `opaque` (where `meta` is serialized), so it proves this server issued both values. It does not cover `description`, which is rebuilt from `discountBps` rather than echoed. `mppx` still pins `recipient` and `currency` to this request, and it enforces `expires`.
 5. Call:
 
 ```ts
@@ -146,6 +146,7 @@ const result = await mppx.charge({
   recipient: address,
   expires: Expires.minutes(2),
   description,             // `Invoice ${decodeRef(invoice.invoiceRef)}: ${quoteBps / 100}% early-payment discount`
+  meta: { discountBps: String(quoteBps) },
 })(request);
 if (result.status === 402) return result.challenge;
 ```
@@ -157,7 +158,7 @@ if (result.status === 402) return result.challenge;
 {
   invoice: Address,
   transferTx: Hash,        // from the MPP Receipt's `reference`
-  amount: string,          // in token units
+  amount: string,          // atomic units (6 decimals), as in the Challenge's `request.amount`
   discountBps: number,     // quoteBps
   settleTx: Hash | null,
   settled: boolean,

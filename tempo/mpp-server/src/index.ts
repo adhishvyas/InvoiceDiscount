@@ -1,8 +1,20 @@
 import { serve } from '@hono/node-server';
+import { createPublicClient, createWalletClient, http } from 'viem';
+import { privateKeyToAccount } from 'viem/accounts';
+import { tempoModerato } from 'viem/chains';
 import { createApp } from './app';
 import { readEnv } from './env';
 
 const env = readEnv();
-const app = createApp({ allowedOrigin: env.allowedOrigin });
+const transport = http(env.rpcUrl);
+const app = createApp({
+  allowedOrigin: env.allowedOrigin,
+  pay: {
+    client: createPublicClient({ chain: tempoModerato, transport }),
+    settler: createWalletClient({ account: privateKeyToAccount(env.settlerKey), chain: tempoModerato, transport }),
+    factory: env.factory,
+    secretKey: env.secretKey,
+  },
+});
 
 serve({ fetch: app.fetch, port: env.port }, ({ port }) => console.log(`mpp-server listening on :${port}`));

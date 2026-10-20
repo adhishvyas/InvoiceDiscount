@@ -1,5 +1,10 @@
 {
-  "factory": "0x9e9f4Da093bFD225145396d80ca5e799e10Ce0fC",
-  "implementation": "0xF0964E9A43664ca32b9890Ba21EB08f41933798A",
-  "deployBlock": 40304928
+  "factory": "0x1A6934651E179448e131C453E96Ee90856b65fF8",
+  "implementation": "0xBC5F24f523997328cA71CD371125911574195Dda",
+  "deployBlock": 40362093,
+  "previous": {
+    "factory": "0x9e9f4Da093bFD225145396d80ca5e799e10Ce0fC",
+    "implementation": "0xF0964E9A43664ca32b9890Ba21EB08f41933798A",
+    "deployBlock": 40304928
+  }
 }

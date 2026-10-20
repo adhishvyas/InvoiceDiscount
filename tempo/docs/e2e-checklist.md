@@ -2,10 +2,10 @@
 
 Manual run on Moderato (chain 42431). Spec: [`spec/invoice-discount-spec.md`](spec/invoice-discount-spec.md) §3.8 (worked example) and §4.3 (pages and actions). Record a tx hash next to every ticked item.
 
-- Factory: `0x9e9f4Da093bFD225145396d80ca5e799e10Ce0fC`
-- Implementation: `0xF0964E9A43664ca32b9890Ba21EB08f41933798A`
+- Factory: `0x1A6934651E179448e131C453E96Ee90856b65fF8` (interface v2; the v1 factory is under `previous` in `contracts/deployments/moderato.json`)
+- Implementation: `0xBC5F24f523997328cA71CD371125911574195Dda`
 - Explorer: https://explore.testnet.tempo.xyz
-- Frontend: `cd tempo/frontend && corepack pnpm dev` (needs `.env` with `VITE_FACTORY_ADDRESS` and `VITE_FACTORY_DEPLOY_BLOCK=40304928`)
+- Frontend: `cd tempo/frontend && corepack pnpm dev` (needs `.env` with `VITE_FACTORY_ADDRESS` and `VITE_FACTORY_DEPLOY_BLOCK=40362093`)
 
 ## 0. Setup
 

@@ -190,6 +190,8 @@ Merge T1's branch. Run the full suite. For each failing test or spec question, a
 
 ### C3 — New factory deploy (user broadcasts)
 
+> **Status:** ✅ **Completed** 2026-10-19. Factory `0x1A6934651E179448e131C453E96Ee90856b65fF8`, implementation `0xBC5F24f523997328cA71CD371125911574195Dda`, block 40362093. `implementation()` matches and its code contains `0x465abf2e` (`settleDirect()`).
+
 Same `script/Deploy.s.sol` (no change needed). Claude writes the command; the user runs it. Then update `contracts/deployments/moderato.json`, the frontend `.env` (`VITE_FACTORY_ADDRESS`, `VITE_FACTORY_DEPLOY_BLOCK`), and the addresses at the top of `docs/e2e-checklist.md`. Keep the old factory's address in `deployments/` under a `previous` key for reference.
 
 **Verify:** `cast call <factory> "implementation()"` returns an address whose code contains the `settleDirect()` selector (`cast sig "settleDirect()"`).

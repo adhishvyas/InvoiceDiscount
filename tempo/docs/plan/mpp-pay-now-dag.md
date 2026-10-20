@@ -174,13 +174,15 @@ Implement MPP spec §3.1 in `InvoiceEscrow.sol`, reusing `_activeDiscount`, `_pa
 
 ### T1 — `settleDirect` tests, red against stubs (Sonnet sub-agent)
 
-> **Status:** 🔄 Running (started 2026-10-19)
+> **Status:** ✅ **Completed** 2026-10-19. 37 tests, 37/37 red against the stub.
 
 Agent tool with `model: "sonnet"`, `isolation: "worktree"`, branched from `tempo-interface-v2`. Brief: the base plan's [brief](implementation-dag.md#brief-for-the-sub-agent-paste-as-the-agent-prompt), with these inputs instead: the MPP spec §3 and §6.1, the v2 stubs, and `test/unit/Base.t.sol` (extend it, don't fork it: add the `SettledDirect` event mirror). Write a new `test/unit/InvoiceEscrowSettleDirect.t.sol` with the 8 tests in §6.1 plus boundaries: exact `due` vs `due - 1`, `due` at 0 bps and 10_000 bps (`due == 0`, so any positive balance settles), a seller calling with balance 0, the `TransferWithMemo` event's arguments, and `buyer`/`refundAddress` still zero in `getInvoice()` after settling. Spec questions go in `test/SPEC_QUESTIONS.md` under a new "MPP" heading. Every `expectRevert` names the exact selector.
 
 **Verify:** `forge test --match-path 'test/unit/InvoiceEscrowSettleDirect.t.sol'` against the stubs: every test fails. Report the test count and spec questions.
 
 ### M1 — Merge + triage (main session)
+
+> **Status:** ✅ **Completed** 2026-10-19. 142/142 green with no fixes; see [`test-lane-findings.md`](test-lane-findings.md#mpp-pay-now-settledirect-node-m1-of-mpp-pay-now-dagmd).
 
 Merge T1's branch. Run the full suite. For each failing test or spec question, add a row to `test-lane-findings.md` under a new "MPP pay-now" section (impl bug / test bug / spec gap), and send fixes to the file's owner.
 
@@ -194,11 +196,15 @@ Same `script/Deploy.s.sol` (no change needed). Claude writes the command; the us
 
 ### V1 — `tempo/mpp-server/` scaffold
 
+> **Status:** ✅ **Completed** 2026-10-19
+
 `package.json` (`"type": "module"`, `dev` via `tsx watch`, `test` via `vitest run`), `tsconfig.json`, `.env.example` with the six vars from MPP spec §4.1, `.gitignore` (`.env`, `node_modules`). Dependencies: `mppx@0.13.5`, `viem`, `hono`, `@hono/node-server`. `src/env.ts` reads and checks the env once at startup. `src/index.ts`: a Hono app with CORS from MPP spec §4.4 (allow `Authorization` and `Accept-Payment`; expose `WWW-Authenticate` and `Payment-Receipt`) and a `GET /health` route. The server is its own package, so it gets its own copy of the ABIs: extend `frontend/scripts/sync-abi.mjs` to also write `mpp-server/src/abi/`, rather than importing across packages.
 
 **Verify:** `corepack pnpm dev` starts; `curl -i -X OPTIONS` from `ALLOWED_ORIGIN` shows the allowed and exposed headers.
 
 ### V2 — Quote module (`src/quote.ts`) + tests
+
+> **Status:** ✅ **Completed** 2026-10-19 (11 tests)
 
 MPP spec §4.2:
 
@@ -213,6 +219,8 @@ Candidates are `t` and each cutoff `c` with `t < c ≤ t + window`. The function
 **Verify:** vitest cases from MPP spec §6.2: no tiers; inside a tier with no cutoff in the window; a cutoff in the window with decreasing tiers; a cutoff in the window where the next tier is **larger** (the quote keeps the current, smaller one); past the due date (0 bps). Plus: a cutoff exactly at `t + 180` counts, one at `t` doesn't (it's already past). `quoteAmount` matches the contract's rounding for an odd principal.
 
 ### V3 — Clone check + invoice read (`src/invoice.ts`)
+
+> **Status:** ✅ **Completed** 2026-10-19 (5 tests)
 
 - `isClone(client, factory, address)`: `getCode(address)` equals the EIP-1167 runtime (S1 item 5) with `factory.implementation()` spliced in. Cache `implementation()` for the process lifetime.
 - `readInvoice(client, address)`: `getInvoice()`.

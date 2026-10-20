@@ -58,3 +58,47 @@ All twelve are consistent with the current implementation and with the tests' st
 | Spec gap | 12 questions, 0 failures, all resolved in the spec |
 
 The independent tests caught 2 implementation bugs that the main session's smoke tests missed, from a spec-only reading and a stub-only interface.
+
+---
+
+# MPP pay-now: `settleDirect` (node M1 of [`mpp-pay-now-dag.md`](mpp-pay-now-dag.md))
+
+> 2026-10-19. Tests: Sonnet 5.5, black-box from MPP spec §3 and §6.1 and the frozen interface (`tempo-interface-v2`). Implementation: Opus, main session, written while the tests were being written, with no sight of them. Merge commit `bb2e755`.
+
+## Result
+
+| Suite | Count | Result before fixes | Result after fixes |
+|---|---|---|---|
+| `test/unit/InvoiceEscrowSettleDirect.t.sol` | 37 (8 from spec §6.1 + 29 boundary/adversarial) | all pass | no fixes needed |
+| Rest of unit + smoke (incl. 2 main-session `settleDirect` smoke tests) | 105 | all pass | |
+
+Red check on the stub (test author): 37 of 37 failed. The test author also ran the suite against its own throw-away reference implementation (all passed) and reverted it.
+
+## Findings
+
+None. No implementation bugs, no test bugs. This is a smaller surface than v1 (one function, three checks), and the spec spelled out check order and rounding, which left little room for the two readings to diverge.
+
+## Spec questions raised by the test author
+
+All five match the implementation and the spec. None caused a failure, and none needs a spec change:
+
+| # | Question | Assessment |
+|---|---|---|
+| 1 | Does the payout address or payer get the seller's underpayment override? | No. Spec §3.1 says "only the seller may do it" |
+| 2 | Is there a due-date check? | No. After the last cutoff the discount is 0, so `due == principal`. Spec §3.1 has no such check |
+| 3 | Check order | Pinned by both the spec and the NatSpec |
+| 4 | Other events besides `SettledDirect` (no `Paid`, one memo transfer) | Implied by §3.1, which lists one transfer and one event |
+| 5 | Funds sent into a non-Active clone stay stuck | Spec §7, by design |
+
+## Other notes
+
+- **Test-author process, again.** The worktree started at `f637c0d`, not at the tag. The agent reset its branch to `tempo-interface-v2`, as in v1. The Agent tool's worktree evidently branches from somewhere other than the current HEAD, so future briefs should say "reset to the tag first".
+- **Fork suite.** The test author reported that the fork suite's `setUp` now fails because the Moderato fork holder's token balance is too low. That needs testnet funds (`cast rpc tempo_fundAddress`), not a code change, and `settleDirect` doesn't touch it.
+
+## Summary
+
+| Class | Count |
+|---|---|
+| Impl bug | 0 |
+| Test bug | 0 |
+| Spec gap | 5 questions, 0 failures, none needing a spec change |

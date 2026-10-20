@@ -8,7 +8,8 @@ export const EXPLORER_URL = 'https://explore.testnet.tempo.xyz';
 
 export const config = createConfig({
   chains: [tempoModerato],
-  connectors: [tempoWallet({ feePayer: SPONSOR_URL }), injected()],
+  // `mpp: false`: otherwise the Accounts SDK patches the global `fetch` and pays any 402 without asking.
+  connectors: [tempoWallet({ feePayer: SPONSOR_URL, mpp: false }), injected()],
   multiInjectedProviderDiscovery: false,
   transports: { [tempoModerato.id]: http() },
 });
@@ -39,3 +40,6 @@ export const FACTORY_ADDRESS = (import.meta.env.VITE_FACTORY_ADDRESS || undefine
 export const FACTORY_DEPLOY_BLOCK = import.meta.env.VITE_FACTORY_DEPLOY_BLOCK
   ? BigInt(import.meta.env.VITE_FACTORY_DEPLOY_BLOCK)
   : undefined;
+
+/** The MPP pay-now server; unset hides Pay now. */
+export const MPP_SERVER_URL = (import.meta.env.VITE_MPP_SERVER_URL || undefined) as string | undefined;

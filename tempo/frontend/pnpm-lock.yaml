@@ -14,6 +14,9 @@ importers:
       accounts:
         specifier: 0.18.4
         version: 0.18.4(@types/react@19.3.0)(@wagmi/core@3.6.5)(react@19.3.1)(typescript@6.0.3)(use-sync-external-store@1.4.0(react@19.3.1))(viem@2.57.7(typescript@6.0.3)(zod@4.6.7))(wagmi@3.7.7)
+      mppx:
+        specifier: 0.13.5
+        version: 0.13.5(hono@4.13.13)(typescript@6.0.3)(viem@2.57.7(typescript@6.0.3)(zod@4.6.7))
       react:
         specifier: ^19.2.6
         version: 19.3.1
@@ -371,6 +374,10 @@ packages:
 
   '@stripe/stripe-js@9.13.0':
     resolution: {integrity: sha512-/0c72BUgzzVkVTlsw5uBn8x3waTdVJ/PZGfQ6jY1eu6K7olUPf4d9lgDPA9/0sIdsR8j7o3QIG8fOCO6ItcL7A==}
+    engines: {node: '>=12.16'}
+
+  '@stripe/stripe-js@9.17.0':
+    resolution: {integrity: sha512-uidL4OJum5kivsOAQnVfQmYLJ2zdgirtmT0zWgskASZ4TPXxpXQ0MNrzW4NsXB90uEqmPHpSEtciLFbF1QQvNA==}
     engines: {node: '>=12.16'}
 
   '@tailwindcss/node@4.3.3':
@@ -849,6 +856,10 @@ packages:
     resolution: {integrity: sha512-EKN1vKAMcZ8MlYMpaNuxN6R9yakzH6uajHcHVTqWJzvu5pWw9DyhbP35HH8MVBQ+dZjAfDxk+A8NiR9KWaXiyQ==}
     engines: {node: '>=18.0.0'}
 
+  eventsource-parser@4.1.1:
+    resolution: {integrity: sha512-zaWNqeSLeyzEAAt2Q6aDBRDRk/VnPmsKqvToyGvv6aahvLv71A4Jw7jG93Hckf11zXurbqgsffvpSgKPoeU1Qw==}
+    engines: {node: '>=22.12'}
+
   expect-type@1.4.0:
     resolution: {integrity: sha512-KfYbmpRm0VbLjEvVa9yGwCi9GI34xvi7A/HXYWQO65CSD2u3MczUJSuwXKFIxlGsgBQizV9q5J9NHj4VG0n+pA==}
     engines: {node: '>=12.0.0'}
@@ -1153,6 +1164,43 @@ packages:
       typescript:
         optional: true
 
+  mppx@0.13.5:
+    resolution: {integrity: sha512-CHBYIYb8AAryiOhUGcuWky6fmmHzkPJtc5XkSOSyNiR5KQIcWvCNV1GMWMFi3V1QH+dSccX+mfjNWqoKxPaj9Q==}
+    hasBin: true
+    peerDependencies:
+      '@modelcontextprotocol/sdk': '>=1.25.0'
+      '@x402/core': '>=2.22.0'
+      '@x402/express': '>=2.22.0'
+      '@x402/hono': '>=2.22.0'
+      '@x402/mcp': '>=2.22.0'
+      '@x402/next': '>=2.22.0'
+      elysia: '>=1.2.0'
+      express: '>=5'
+      hono: '>=4.12.25'
+      next: '>=16.2.6'
+      viem: '>=2.57.1'
+    peerDependenciesMeta:
+      '@modelcontextprotocol/sdk':
+        optional: true
+      '@x402/core':
+        optional: true
+      '@x402/express':
+        optional: true
+      '@x402/hono':
+        optional: true
+      '@x402/mcp':
+        optional: true
+      '@x402/next':
+        optional: true
+      elysia:
+        optional: true
+      express:
+        optional: true
+      hono:
+        optional: true
+      next:
+        optional: true
+
   mppx@0.9.3:
     resolution: {integrity: sha512-hrmPRP4c7KecQXwBBZSCfP0BU7kfmcZ6sNRmJC9QkK2gDYzkGV1Y/ZQvCMTCcBj7JaHgs8cS58oNhlrWN7vMgQ==}
     hasBin: true
@@ -1215,6 +1263,14 @@ packages:
 
   ox@0.14.33:
     resolution: {integrity: sha512-rooA/4o7bBof4Ge2VH/eovfNPb/AEEYyrNj03wggc55g5HZD8Pjs/OeWhttgjic3dDcqn0r29bDuvQEdTiUemQ==}
+    peerDependencies:
+      typescript: '>=5.4.0'
+    peerDependenciesMeta:
+      typescript:
+        optional: true
+
+  ox@0.14.45:
+    resolution: {integrity: sha512-jpsQ+p0JZh9mKCxxzxz0d5qFHZZg2/O9xW18IpEC/dNXXPVqmDJ0c//9RMz0CILkbSGPA42+cbU0fC/ghwJ03w==}
     peerDependencies:
       typescript: '>=5.4.0'
     peerDependenciesMeta:
@@ -1331,6 +1387,10 @@ packages:
 
   structured-headers@2.0.3:
     resolution: {integrity: sha512-4g5yxhlDMClRwCcfKfLeS7Z8yAVdOWGDADwm80Poh1iReU2KVKLGBlqwpHWJ2qovq0+ZIf1atAEO1eua2o9Rgg==}
+    engines: {node: '>=18', npm: '>=6'}
+
+  structured-headers@2.1.0:
+    resolution: {integrity: sha512-ClzykN+XQVaSW5UfpOdEWfDplZ1Th7mISdaFvaC2+GjLTeBhGMJw83D/Rw9jPkHOml4oYd3EXaZhbz3gnE5nBQ==}
     engines: {node: '>=18', npm: '>=6'}
 
   tailwindcss@4.3.3:
@@ -1859,6 +1919,8 @@ snapshots:
 
   '@stripe/stripe-js@9.13.0': {}
 
+  '@stripe/stripe-js@9.17.0': {}
+
   '@tailwindcss/node@4.3.3':
     dependencies:
       '@jridgewell/remapping': 2.3.5
@@ -2300,6 +2362,8 @@ snapshots:
 
   eventsource-parser@3.1.1: {}
 
+  eventsource-parser@4.1.1: {}
+
   expect-type@1.4.0: {}
 
   fast-deep-equal@3.1.3: {}
@@ -2523,6 +2587,19 @@ snapshots:
     optionalDependencies:
       typescript: 6.0.3
 
+  mppx@0.13.5(hono@4.13.13)(typescript@6.0.3)(viem@2.57.7(typescript@6.0.3)(zod@4.6.7)):
+    dependencies:
+      '@stripe/stripe-js': 9.17.0
+      eventsource-parser: 4.1.1
+      ox: 0.14.45(typescript@6.0.3)(zod@4.6.7)
+      structured-headers: 2.1.0
+      viem: 2.57.7(typescript@6.0.3)(zod@4.6.7)
+      zod: 4.6.7
+    optionalDependencies:
+      hono: 4.13.13
+    transitivePeerDependencies:
+      - typescript
+
   mppx@0.9.3(hono@4.13.13)(typescript@6.0.3)(viem@2.57.7(typescript@6.0.3)(zod@4.6.7)):
     dependencies:
       '@stripe/stripe-js': 9.13.0
@@ -2556,6 +2633,21 @@ snapshots:
       word-wrap: 1.2.5
 
   ox@0.14.33(typescript@6.0.3)(zod@4.6.7):
+    dependencies:
+      '@adraffy/ens-normalize': 1.11.1
+      '@noble/ciphers': 1.3.0
+      '@noble/curves': 1.9.1
+      '@noble/hashes': 1.8.0
+      '@scure/bip32': 1.7.0
+      '@scure/bip39': 1.6.0
+      abitype: 1.3.0(typescript@6.0.3)(zod@4.6.7)
+      eventemitter3: 5.0.1
+    optionalDependencies:
+      typescript: 6.0.3
+    transitivePeerDependencies:
+      - zod
+
+  ox@0.14.45(typescript@6.0.3)(zod@4.6.7):
     dependencies:
       '@adraffy/ens-normalize': 1.11.1
       '@noble/ciphers': 1.3.0
@@ -2676,6 +2768,8 @@ snapshots:
   std-env@4.3.0: {}
 
   structured-headers@2.0.3: {}
+
+  structured-headers@2.1.0: {}
 
   tailwindcss@4.3.3: {}
 

@@ -249,6 +249,8 @@ Accepted for the PoC, not handled: two concurrent pays for different invoices sh
 
 ### F1 — Config, deps, ABI sync
 
+> **Status:** ✅ **Completed** 2026-10-19. `config.test.ts` has a regression test that fails without `mpp: false`: the provider replaces `globalThis.fetch` when it is created (confirmed by a probe; S1 item 1b).
+
 - `config.ts`: `MPP_SERVER_URL` from `VITE_MPP_SERVER_URL` (undefined → Pay now hidden), in the same style as `FACTORY_ADDRESS`. Add it to `.env.example`.
 - Add `mppx@0.13.5` (same as the server; separate from the 0.9.3 the `accounts` package bundles).
 - `tempoWallet({ feePayer: SPONSOR_URL, mpp: false })`. **Required:** otherwise the Accounts SDK patches the global `fetch` and pays any 402 without asking (S1 item 1b).
@@ -258,12 +260,16 @@ Accepted for the PoC, not handled: two concurrent pays for different invoices sh
 
 ### F2 — Pure helpers + tests
 
+> **Status:** ✅ **Completed** 2026-10-19 (17 action tests, 3 decoder tests; the fixture is a 402 captured from the V4 endpoint). One extra rule: Pay now is hidden once the clone already holds the amount due, so nobody pays twice (spec §5.1 amended).
+
 - `lib/actions.ts`: extend `ActionContext` with `walletMode`, `cloneBalance` and `dueNow` (the amount due at the current discount), and `VisibleActions` with `payNow`, `finishSettlement`, `acceptAndSettle`, using the rules in MPP spec §5.1. `payNow` also needs `MPP_SERVER_URL` set; pass it in as a boolean so the function stays pure.
 - `lib/mpp.ts`: turn a 402 `Response` into the panel's Challenge view (status, raw `WWW-Authenticate`, decoded `amount`/`currency`/`recipient`/`expires`/`description`), and a `Payment-Receipt` header into the Receipt view (`method`, `reference`, `status`, `timestamp`). Uses `mppx`'s own decoders (`Challenge.fromHeaders`, the Receipt equivalent found in S1).
 
 **Verify:** `actions.test.ts` gains a case per new action and its negatives (seller doesn't see Pay now; injected wallet doesn't; Funded doesn't; `acceptAndSettle` only when `0 < balance < dueNow`; `finishSettlement` when `balance ≥ dueNow`). `mpp.test.ts` decodes a fixture header captured in S1.
 
 ### F3 — `useMppPay` hook
+
+> **Status:** ✅ **Completed** 2026-10-19. `maxAtomicAmount` is the confirmed quote, not the principal, because the paid request gets a fresh 402 (spec §5.1 amended). The panel shows that second Challenge, since it's the one paid.
 
 `hooks/useMppPay.ts`, two steps the UI calls separately:
 
@@ -275,6 +281,8 @@ State follows `useInvoiceWrite`'s shape (`idle | pending | success | error`) plu
 **Verify:** typecheck; behaviour is checked in I2 (it needs a wallet).
 
 ### F4 — InvoiceDetail UI
+
+> **Status:** ✅ **Completed** 2026-10-19. Build and lint clean; the visual check is in I2.
 
 In `pages/InvoiceDetail.tsx`:
 
@@ -288,6 +296,8 @@ Match the page's existing Tailwind classes and `WriteStatus` component.
 **Verify:** `corepack pnpm build`, `corepack pnpm lint`; visual check in I2.
 
 ### F5 — History: `SettledDirect` + inbound transfer
+
+> **Status:** ✅ **Completed** 2026-10-19. 59 frontend tests in all. The `TransferWithMemo` event and its indexed `to` filter were checked against live Moderato logs.
 
 - `lib/history.ts`: add `SettledDirect` to `HistoryLog` and a `settledDirect?: Step & { caller; payoutAddress; amount; discountBps }` field to `InvoiceHistory`. When it is present, also read the token's `TransferWithMemo` logs with `to = invoice` from the creation block (one extra paged scan on `inv.token`, filtered by the indexed `to` topic) and record each as `inbound: { from, amount, memo, tx, timestamp }[]`. Pass the token address into `fetchInvoiceHistory`.
 - `lib/historyCache.ts`: `isSettled` also true for `settledDirect`.

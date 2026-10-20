@@ -25,7 +25,21 @@ const cancelled: HistoryLog = {
   transactionHash: tx(4),
   args: { caller: SELLER, refunded: 0n },
 };
-const timestamps = new Map([[10n, 1000n], [20n, 2000n], [25n, 2500n], [30n, 3000n]]);
+const PAYER = '0x00000000000000000000000000000000000000d4';
+const MEMO = `0x${'ef'.repeat(32)}` as const;
+const inbound = (blockNumber: bigint, n: number, amount: bigint): HistoryLog => ({
+  eventName: 'TransferWithMemo',
+  blockNumber,
+  transactionHash: tx(n),
+  args: { from: PAYER, amount, memo: MEMO },
+});
+const settledDirect: HistoryLog = {
+  eventName: 'SettledDirect',
+  blockNumber: 40n,
+  transactionHash: tx(6),
+  args: { caller: SELLER, payoutAddress: SELLER, amount: 900_000n, discountBps: 1000 },
+};
+const timestamps = new Map([[10n, 1000n], [20n, 2000n], [25n, 2500n], [30n, 3000n], [35n, 3500n], [38n, 3800n], [40n, 4000n]]);
 
 describe('buildHistory', () => {
   it('is empty with no events', () => {
@@ -57,5 +71,25 @@ describe('buildHistory', () => {
   });
   it('throws when a block timestamp is missing', () => {
     expect(() => buildHistory([paid], new Map())).toThrow('Missing timestamp for block 30');
+  });
+  it('maps a direct settlement with the inbound transfers, oldest first', () => {
+    const history = buildHistory([settledDirect, inbound(38n, 7, 400_000n), created, inbound(35n, 5, 500_000n)], timestamps);
+    expect(history.funded).toBeUndefined();
+    expect(history.paid).toBeUndefined();
+    expect(history.settledDirect).toEqual({
+      timestamp: 4000n,
+      tx: tx(6),
+      caller: SELLER,
+      payoutAddress: SELLER,
+      amount: 900_000n,
+      discountBps: 1000,
+    });
+    expect(history.inbound).toEqual([
+      { timestamp: 3500n, tx: tx(5), from: PAYER, amount: 500_000n, memo: MEMO },
+      { timestamp: 3800n, tx: tx(7), from: PAYER, amount: 400_000n, memo: MEMO },
+    ]);
+  });
+  it('has no inbound list without inbound transfers', () => {
+    expect(buildHistory([created, paid], timestamps).inbound).toBeUndefined();
   });
 });

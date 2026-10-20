@@ -6,9 +6,10 @@ import { fetchInvoiceHistory } from '../lib/history';
 import { readCachedHistory, writeCachedHistory } from '../lib/historyCache';
 
 /** The invoice's lifecycle events with timestamps. Refetches when `status` changes (after fund / pay / cancel). */
-export function useInvoiceHistory(invoice: Address, status: number) {
+export function useInvoiceHistory(invoice: Address, token: Address | undefined, status: number) {
   const client = useClient();
-  const enabled = client !== undefined && FACTORY_ADDRESS !== undefined && FACTORY_DEPLOY_BLOCK !== undefined;
+  const enabled =
+    client !== undefined && token !== undefined && FACTORY_ADDRESS !== undefined && FACTORY_DEPLOY_BLOCK !== undefined;
 
   return useQuery({
     queryKey: ['invoice-history', invoice, status],
@@ -16,7 +17,7 @@ export function useInvoiceHistory(invoice: Address, status: number) {
     queryFn: async () => {
       const cached = readCachedHistory(invoice);
       if (cached) return cached;
-      const history = await fetchInvoiceHistory(client!, FACTORY_ADDRESS!, FACTORY_DEPLOY_BLOCK!, invoice);
+      const history = await fetchInvoiceHistory(client!, FACTORY_ADDRESS!, FACTORY_DEPLOY_BLOCK!, invoice, token!);
       writeCachedHistory(invoice, history);
       return history;
     },

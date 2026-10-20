@@ -104,14 +104,37 @@ function TimelineRow({
   );
 }
 
-function Timeline({ history, status, account }: { history: InvoiceHistory; status: StatusValue; account?: Address }) {
-  const { created, funded, paid, cancelled } = history;
+function Timeline({
+  history,
+  status,
+  account,
+  money,
+}: {
+  history: InvoiceHistory;
+  status: StatusValue;
+  account?: Address;
+  money: (units: bigint) => string;
+}) {
+  const { created, funded, paid, cancelled, settledDirect, inbound } = history;
   const open = status === Status.Active || status === Status.Funded;
   return (
     <ul>
       <TimelineRow label="Created" at={created?.timestamp} tx={created?.tx} actor={created?.seller} account={account} />
       {(funded || open) && <TimelineRow label="Funded" at={funded?.timestamp} tx={funded?.tx} actor={funded?.buyer} account={account} />}
-      {cancelled ? (
+      {settledDirect ? (
+        <>
+          {inbound?.map((t) => (
+            <TimelineRow key={t.tx} label={`Paid ${money(t.amount)} directly`} at={t.timestamp} tx={t.tx} actor={t.from} account={account} />
+          ))}
+          <TimelineRow
+            label="Settled directly"
+            at={settledDirect.timestamp}
+            tx={settledDirect.tx}
+            actor={settledDirect.caller}
+            account={account}
+          />
+        </>
+      ) : cancelled ? (
         <TimelineRow label="Cancelled" at={cancelled.timestamp} tx={cancelled.tx} actor={cancelled.caller} account={account} />
       ) : (
         <TimelineRow
@@ -129,16 +152,42 @@ function Timeline({ history, status, account }: { history: InvoiceHistory; statu
 
 function Settlement({
   history,
+  principal,
   dueDate,
   money,
   account,
 }: {
   history: InvoiceHistory;
+  principal: bigint;
   dueDate: bigint;
   money: (units: bigint) => string;
   account?: Address;
 }) {
-  const { paid, cancelled } = history;
+  const { paid, cancelled, settledDirect, inbound } = history;
+  if (settledDirect) {
+    const discount = principal - settledDirect.amount;
+    return (
+      <>
+        <div className="flex justify-between text-sm py-2 border-b border-slate-800">
+          <span className="text-slate-400">Seller payout</span>
+          <span>
+            <span className="font-medium text-slate-200">{money(settledDirect.amount)}</span> to{' '}
+            <Actor address={settledDirect.payoutAddress} account={account} />
+          </span>
+        </div>
+        <div className="flex justify-between text-sm py-2 border-b border-slate-800 last:border-0">
+          <span className="text-slate-400">Payer discount ({bpsToPercent(settledDirect.discountBps)} tier)</span>
+          <span className="font-medium text-slate-200">{discount > 0n ? `${money(discount)} not paid` : 'none'}</span>
+        </div>
+        {inbound?.map((t) => (
+          <p key={t.tx} className="text-xs text-slate-500 pt-2 break-all">
+            Memo on the payment from {short(t.from)}: <span className="font-mono">{t.memo}</span>
+          </p>
+        ))}
+        <p className="text-xs text-slate-500 pt-2">Paid directly with no escrow, so no refund.</p>
+      </>
+    );
+  }
   if (paid) {
     const line = (label: string, amount: bigint, to: Address) => (
       <div className="flex justify-between text-sm py-2 border-b border-slate-800 last:border-0">
@@ -290,7 +339,7 @@ function Invoice({ invoice }: { invoice: Address }) {
     args: [BigInt(now)],
   });
 
-  const { data: history, isError: historyError, refetch: refetchHistory } = useInvoiceHistory(invoice, inv?.status ?? -1);
+  const { data: history, isError: historyError, refetch: refetchHistory } = useInvoiceHistory(invoice, inv?.token, inv?.status ?? -1);
 
   const { state: fundState, fund, reset: resetFund } = useFund();
   const { state: txState, run, reset: resetTx } = useInvoiceWrite();
@@ -373,10 +422,10 @@ function Invoice({ invoice }: { invoice: Address }) {
           <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-widest mb-3">History</h2>
           {history ? (
             <div className="bg-slate-900 border border-slate-800 rounded-xl px-5 py-2">
-              <Timeline history={history} status={status} account={account} />
-              {(history.paid || history.cancelled) && (
+              <Timeline history={history} status={status} account={account} money={money} />
+              {(history.paid || history.cancelled || history.settledDirect) && (
                 <div className="border-t border-slate-700 mt-2 pt-2">
-                  <Settlement history={history} dueDate={inv.dueDate} money={money} account={account} />
+                  <Settlement history={history} principal={inv.principal} dueDate={inv.dueDate} money={money} account={account} />
                 </div>
               )}
             </div>

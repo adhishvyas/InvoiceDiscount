@@ -10,8 +10,9 @@ const reviver = (_: string, v: unknown) =>
 export const serializeHistory = (history: InvoiceHistory) => JSON.stringify(history, replacer);
 export const parseHistory = (text: string) => JSON.parse(text, reviver) as InvoiceHistory;
 
-/** A settled invoice (paid or cancelled) never changes, so its history is cached. */
-export const isSettled = (history: InvoiceHistory) => history.paid !== undefined || history.cancelled !== undefined;
+/** A settled invoice (paid, settled directly, or cancelled) never changes, so its history is cached. */
+export const isSettled = (history: InvoiceHistory) =>
+  history.paid !== undefined || history.settledDirect !== undefined || history.cancelled !== undefined;
 
 /** Per-viewer speed-up only; storage may be unavailable or hold bad data, so every failure means "no cache". */
 export function readCachedHistory(invoice: Address): InvoiceHistory | undefined {

@@ -281,6 +281,8 @@ The frontend's black-box boundary is `src/lib/`. These are the pure modules the 
 
 ### F3 — Config + wallet / tx layer (frontend agent)
 
+> **Status:** ✅ **Completed** 2026-10-30 (code; `8b1020e` on `ethereum-frontend`). ⏳ Browser check still to do (connect, switch chain, disconnect, `wallet_getCapabilities` result, no-ETH error). Batch path uses the `sendCalls` / `waitForCallsStatus` actions rather than the hooks, so one async `run` can await them.
+
 - Delete `useWalletMode.ts`. `useInvoiceWrite`: `writeContract` + `waitForTransactionReceipt`, with no `feePayer` or `*Sync` actions; exposes pending, tx hash, success and error (via `friendlyError`).
 - `useFund`: `useCapabilities` → `fundPath`. `batch` → `useSendCalls` with `[approve, fund]` and `forceAtomic: true`, waited with `useWaitForCallsStatus`. `sequential` → `approve`, wait, `fund`.
 - `ConnectButton`: injected only; "Switch to Sepolia" when on another chain; Sepolia ETH note with faucet link.
@@ -289,12 +291,16 @@ The frontend's black-box boundary is `src/lib/`. These are the pure modules the 
 
 ### F4 — lib/ implementations (frontend agent, in parallel with F3)
 
+> **Status:** ✅ **Completed** 2026-10-30. Exported declarations identical to the tag (`.d.ts` diff: import syntax only).
+
 - Restore the bodies of the unchanged modules verbatim from `tempo/frontend/src/lib/`.
 - Port `actions.ts`, `history.ts` and `logs.ts` per the reuse map. Implement `fundPath`, `upcomingCutoff` and `friendlyError` to their TSDoc.
 
 **Verify:** `tsc --noEmit`; exports identical to `ethereum-frontend-interface-v1` (diff of the `.d.ts` output from `tsc --declaration --emitDeclarationOnly`).
 
 ### F5 — Pages (frontend agent)
+
+> **Status:** ✅ **Completed** 2026-10-30. `corepack pnpm build` and `lint` pass. Browser checks in I1.
 
 Port `Home`, `CreateInvoice` and `InvoiceDetail` per spec §5.3:
 - Home: single connect button, ETH note.

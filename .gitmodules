@@ -7,3 +7,9 @@
 [submodule "tempo/contracts/lib/tempo-std"]
 	path = tempo/contracts/lib/tempo-std
 	url = https://github.com/tempoxyz/tempo-std
+[submodule "ethereum/contracts/lib/forge-std"]
+	path = ethereum/contracts/lib/forge-std
+	url = https://github.com/foundry-rs/forge-std
+[submodule "ethereum/contracts/lib/openzeppelin-contracts"]
+	path = ethereum/contracts/lib/openzeppelin-contracts
+	url = https://github.com/OpenZeppelin/openzeppelin-contracts

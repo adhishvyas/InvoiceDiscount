@@ -188,12 +188,16 @@ Apply S1's corrections to the spec (token table, any API name changes, `LOG_PAGE
 
 ### C3 — InvoiceEscrow port (main session, in parallel with T1–T3)
 
+> **Status:** ✅ **Completed** 2026-10-30. `forge build` passes; ABI equals the tag plus `SafeERC20FailedOperation(address)` (allowed, see C2).
+
 - Restore the function bodies from `tempo/contracts/src/InvoiceEscrow.sol`, then apply the spec's Ethereum changes: the `token.code.length` check, `SafeERC20` calls in place of the memo transfers, `invoiceRef` in each `emit`.
 - Keep the Tempo order of effects and interactions. In `fund`, `status = Funded` comes before `safeTransferFrom` (spec §3.5).
 
 **Verify:** `forge build`; the ABI is identical to `ethereum-interface-v1`. (No tests in this lane; they arrive at M1.)
 
 ### C4 — InvoiceFactory + Deploy port (main session)
+
+> **Status:** ✅ **Completed** 2026-10-30. ABI equals the tag plus `FailedDeployment()` and `InsufficientBalance(uint256,uint256)` (allowed, see C2); `forge script script/Deploy.s.sol` (no broadcast) logs both addresses.
 
 - `InvoiceFactory.sol`: restore the Tempo body (`Clones.clone` → `initialize` → emit → return).
 - `script/Deploy.s.sol`: copy from Tempo; update the comment to `$SEPOLIA_RPC_URL`.

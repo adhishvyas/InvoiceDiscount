@@ -7,7 +7,6 @@ import {InvoiceEscrow, DiscountTier} from "./InvoiceEscrow.sol";
 /// @title InvoiceFactory
 /// @notice Deploys and initialises one EIP-1167 clone of `InvoiceEscrow` per invoice.
 /// @dev INTERFACE FREEZE (tag `ethereum-interface-v1`): signatures, events and NatSpec behaviour are final.
-///      Bodies are stubs.
 contract InvoiceFactory {
     /// @notice The `InvoiceEscrow` implementation that every invoice clones.
     address public immutable implementation;
@@ -52,6 +51,8 @@ contract InvoiceFactory {
         DiscountTier[] calldata tiers,
         address payoutAddress
     ) external returns (address invoice) {
-        revert("unimplemented");
+        invoice = Clones.clone(implementation);
+        InvoiceEscrow(invoice).initialize(msg.sender, invoiceRef, token, principal, dueDate, tiers, payoutAddress);
+        emit InvoiceCreated(invoice, msg.sender, invoiceRef, token, principal, dueDate);
     }
 }

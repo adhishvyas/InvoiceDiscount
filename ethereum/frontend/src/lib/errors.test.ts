@@ -6,16 +6,16 @@ const GAS = 'You need Sepolia ETH to pay gas';
 
 describe('friendlyError', () => {
   it("explains viem's InsufficientFundsError (whose own message does not say 'insufficient funds')", () => {
-    expect(friendlyError(new InsufficientFundsError({ cause: new Error('boom') }))).toBe(GAS);
+    expect(friendlyError(new InsufficientFundsError({ cause: new BaseError('boom') }))).toBe(GAS);
   });
   it('finds an InsufficientFundsError nested in a viem cause chain', () => {
-    const inner = new InsufficientFundsError({ cause: new Error('rpc') });
+    const inner = new InsufficientFundsError({ cause: new BaseError('rpc') });
     const wrapped = new BaseError('Execution reverted for an unknown reason.', { cause: inner });
     const outer = new BaseError('The contract function "fund" reverted.', { cause: wrapped });
     expect(friendlyError(outer)).toBe(GAS);
   });
   it('finds an InsufficientFundsError under a plain Error cause', () => {
-    const err = new Error('write failed', { cause: new InsufficientFundsError({ cause: new Error('x') }) });
+    const err = new Error('write failed', { cause: new InsufficientFundsError({ cause: new BaseError('x') }) });
     expect(friendlyError(err)).toBe(GAS);
   });
   it("matches an 'insufficient funds' message, case-insensitively", () => {

@@ -45,7 +45,7 @@ function makeLog(
   where: { address: Address; blockNumber: bigint; tx: number },
 ): FakeLog {
   const topics = encodeEventTopics({ abi, eventName, args } as never) as Hex[];
-  const item = abi.find((i) => i.type === 'event' && i.name === eventName) as {
+  const item = abi.find((i) => i.type === 'event' && i.name === eventName) as unknown as {
     inputs: { name: string; type: string; indexed: boolean }[];
   };
   const plain = item.inputs.filter((i) => !i.indexed);
@@ -59,6 +59,7 @@ function fakeNode(head: bigint, logs: FakeLog[], opts: { failLogs?: boolean } = 
   const client = createClient({
     transport: custom({
       async request({ method, params }) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const p = (params ?? []) as any[];
         if (method === 'eth_blockNumber') return numberToHex(head);
         if (method === 'eth_getBlockByNumber') {

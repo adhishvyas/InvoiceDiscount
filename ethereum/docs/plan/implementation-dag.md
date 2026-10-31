@@ -236,7 +236,7 @@ Apply S1's corrections to the spec (token table, any API name changes, `LOG_PAGE
 
 ### M1 — Contract merge + triage (main session; user decides spec gaps)
 
-> **Status:** 🔶 **In progress.** Merged (`28246ae`): 154 unit and 11 fork tests pass, 100% coverage of `src/`, 0 impl bugs, 0 test bugs. Waiting on the user's decision on 3 spec gaps; see [`test-lane-findings.md`](test-lane-findings.md).
+> **Status:** ✅ **Completed** 2026-10-30. Merged (`28246ae`): 154 unit and 11 fork tests pass, 100% coverage of `src/`, 0 impl bugs, 0 test bugs. The 3 spec gaps were approved as spec amendments (§3.5 event order and permissive-fallback tokens, §3.9 stray tokens); see [`test-lane-findings.md`](test-lane-findings.md).
 
 As Tempo M1:
 1. Merge the test branch into the contract branch.

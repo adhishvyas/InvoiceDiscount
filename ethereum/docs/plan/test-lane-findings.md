@@ -20,9 +20,9 @@ Isolation: the agent's list of files read contains no `tempo/contracts/src/`, no
 
 | # | Test | Classification | Resolution |
 |---|---|---|---|
-| 1 | SPEC-QUESTION 1: `Transfer` logs come before the escrow event in the same call | **spec gap** | Implementation matches the tests' reading (event emitted last). Pending: the user decides whether to write it into §3.5 |
-| 2 | SPEC-QUESTION 2: §3.5 says a non-ERC-20 contract "makes `fund` revert". Not true for a contract with a permissive `fallback` (SafeERC20 accepts empty return data from any address with code), which would let `fund` mark the invoice Funded with no tokens moved | **spec gap** | Implementation behaves as the agent describes. Pending: the user decides the spec wording (§3.5 / §3.9) |
-| 3 | SPEC-QUESTION 3: tokens sent to an Active clone that is then funded normally stay in the clone; `triggerPayment` and `cancel` move `principal` only | **spec gap** | Implementation matches the tests' reading. Pending: the user decides whether to add it to §3.9 |
+| 1 | SPEC-QUESTION 1: `Transfer` logs come before the escrow event in the same call | **spec gap** | Implementation matches the tests' reading (event emitted last). Approved: added to §3.5 |
+| 2 | SPEC-QUESTION 2: §3.5 says a non-ERC-20 contract "makes `fund` revert". Not true for a contract with a permissive `fallback` (SafeERC20 accepts empty return data from any address with code), which would let `fund` mark the invoice Funded with no tokens moved | **spec gap** | Implementation behaves as the agent describes. Approved: §3.5 corrected, new §3.9 bullet |
+| 3 | SPEC-QUESTION 3: tokens sent to an Active clone that is then funded normally stay in the clone; `triggerPayment` and `cancel` move `principal` only | **spec gap** | Implementation matches the tests' reading. Approved: §3.9 stray-tokens bullet extended |
 
 No **impl bugs** and no **test bugs**.
 
@@ -52,7 +52,7 @@ Red check on the stubs (test author): 150 of 165 failed. The 15 green ones are `
 | 4 | `lib.test.ts` › ref › decodes without the zero padding | **impl bug** | `decodeRef(bytes32(0))` returned `'\u0000'`, not `''` (viem `hexToString` keeps one zero byte). Inherited from Tempo; unreachable there because the contract rejects a zero reference. Fixed by the frontend agent (`1014f3d`) |
 | 5 | `lib.test.ts` › validateInvoiceForm › applies the amount rules at the selected token decimals | **impl bug** | `decimals: 0` built the invalid regex `\d{1,0}` and threw. Inherited from Tempo (always 6 decimals there). Fixed (`1014f3d`): whole numbers only at 0 decimals |
 | 6 | `errors.test.ts`, `fetch.test.ts` type errors (TS2739, TS2352) and one `no-explicit-any` | **test bug** | The test author only ran Vitest, which doesn't type-check. Fixed by agent B (`e8a813b`) with no assertion changes |
-| 7 | SPEC-QUESTION 1 (frontend): Finish settlement when `dueNow == 0` and balance 0 | **spec gap** | TSDoc requires `0 < balance` (matching the contract's `NothingToSettle`); spec §5.3 says only "balance ≥ amount due now". Pending: user decides whether §5.3 adds "and balance > 0" |
+| 7 | SPEC-QUESTION 1 (frontend): Finish settlement when `dueNow == 0` and balance 0 | **spec gap** | TSDoc requires `0 < balance` (matching the contract's `NothingToSettle`); spec §5.3 says only "balance ≥ amount due now". Approved: §5.3 adds "and balance > 0" |
 | 8 | SPEC-QUESTION 2–4 (frontend): checksummed addresses in history output; `friendlyError` on a bare string; bad-checksum token address rejected | **spec gap** (minor) | Tests take the reading the implementation already has. No spec change proposed |
 
 ### Summary

@@ -136,7 +136,7 @@ contract InvoiceEscrow {
     ///         `cutoff > dueDate` → `TierAfterDueDate`;
     ///         `discountBps > 10_000` → `DiscountTooLarge`
     ///      8. `token.code.length == 0` (an EOA, `address(0)`, or any address without code) → `InvalidToken`.
-    ///         This does not prove the contract is an ERC-20; a non-ERC-20 contract makes `fund` revert.
+    ///         This does not prove the contract is an ERC-20; a contract whose `fallback` accepts any call lets `fund` succeed with no tokens moved (spec §3.9).
     ///
     ///      Effects: stores the arguments; `payoutAddress` is stored only if it is non-zero and differs from
     ///      `seller`; sets `status = Active`. Zero tiers is allowed (the invoice then always pays the full

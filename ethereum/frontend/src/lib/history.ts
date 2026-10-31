@@ -1,4 +1,8 @@
-import type { Address, Client, Hex } from 'viem';
+import { erc20Abi, type Address, type Client, type Hex } from 'viem';
+import { getBlock, getBlockNumber, getContractEvents } from 'viem/actions';
+import { invoiceEscrowAbi } from '../abi/InvoiceEscrow';
+import { invoiceFactoryAbi } from '../abi/InvoiceFactory';
+import { blockRanges } from './logs';
 
 /**
  * One decoded event, reduced to what the history needs. The four escrow events carry the invoice's `invoiceRef`
@@ -70,7 +74,34 @@ export interface InvoiceHistory {
  * Throws `Missing timestamp for block <n>` if a log's block is not in `timestamps`.
  */
 export function buildHistory(logs: HistoryLog[], timestamps: ReadonlyMap<bigint, bigint>): InvoiceHistory {
-  throw new Error('unimplemented');
+  const history: InvoiceHistory = {};
+  for (const log of logs) {
+    const timestamp = timestamps.get(log.blockNumber);
+    if (timestamp === undefined) throw new Error(`Missing timestamp for block ${log.blockNumber}`);
+    const step = { timestamp, tx: log.transactionHash };
+    switch (log.eventName) {
+      case 'InvoiceCreated':
+        history.created = { ...step, ...log.args };
+        break;
+      case 'Funded':
+        history.funded = { ...step, ...log.args };
+        break;
+      case 'Paid':
+        history.paid = { ...step, ...log.args };
+        break;
+      case 'Cancelled':
+        history.cancelled = { ...step, ...log.args };
+        break;
+      case 'SettledDirect':
+        history.settledDirect = { ...step, ...log.args };
+        break;
+      case 'Transfer':
+        (history.inbound ??= []).push({ ...step, ...log.args });
+        break;
+    }
+  }
+  history.inbound?.sort((a, b) => (a.timestamp < b.timestamp ? -1 : a.timestamp > b.timestamp ? 1 : 0));
+  return history;
 }
 
 /**
@@ -87,5 +118,64 @@ export async function fetchInvoiceHistory(
   invoice: Address,
   token: Address,
 ): Promise<InvoiceHistory> {
-  throw new Error('unimplemented');
+  const latest = await getBlockNumber(client);
+  const logs: HistoryLog[] = [];
+
+  let createdBlock: bigint | undefined;
+  for (const [from, to] of blockRanges(deployBlock, latest)) {
+    const found = await getContractEvents(client, {
+      address: factory,
+      abi: invoiceFactoryAbi,
+      eventName: 'InvoiceCreated',
+      args: { invoice },
+      strict: true,
+      fromBlock: from,
+      toBlock: to,
+    });
+    if (found.length > 0) {
+      const { blockNumber, transactionHash, args } = found[0];
+      logs.push({ eventName: 'InvoiceCreated', blockNumber, transactionHash, args: { seller: args.seller } });
+      createdBlock = blockNumber;
+      break;
+    }
+  }
+  if (createdBlock === undefined) return {};
+
+  for (const [from, to] of blockRanges(createdBlock, latest)) {
+    const found = await getContractEvents(client, { address: invoice, abi: invoiceEscrowAbi, strict: true, fromBlock: from, toBlock: to });
+    for (const log of found) {
+      const { blockNumber, transactionHash } = log;
+      if (log.eventName === 'Funded') logs.push({ eventName: 'Funded', blockNumber, transactionHash, args: log.args });
+      else if (log.eventName === 'Paid') logs.push({ eventName: 'Paid', blockNumber, transactionHash, args: log.args });
+      else if (log.eventName === 'Cancelled') logs.push({ eventName: 'Cancelled', blockNumber, transactionHash, args: log.args });
+      else if (log.eventName === 'SettledDirect') logs.push({ eventName: 'SettledDirect', blockNumber, transactionHash, args: log.args });
+    }
+  }
+
+  if (logs.some((l) => l.eventName === 'SettledDirect')) {
+    for (const [from, to] of blockRanges(createdBlock, latest)) {
+      const found = await getContractEvents(client, {
+        address: token,
+        abi: erc20Abi,
+        eventName: 'Transfer',
+        args: { to: invoice },
+        strict: true,
+        fromBlock: from,
+        toBlock: to,
+      });
+      for (const { blockNumber, transactionHash, args } of found) {
+        logs.push({ eventName: 'Transfer', blockNumber, transactionHash, args: { from: args.from, amount: args.value } });
+      }
+    }
+  }
+
+  const blocks = [...new Set(logs.map((l) => l.blockNumber))];
+  const timestamps = new Map<bigint, bigint>();
+  await Promise.all(
+    blocks.map(async (blockNumber) => {
+      const block = await getBlock(client, { blockNumber });
+      timestamps.set(blockNumber, block.timestamp);
+    }),
+  );
+  return buildHistory(logs, timestamps);
 }

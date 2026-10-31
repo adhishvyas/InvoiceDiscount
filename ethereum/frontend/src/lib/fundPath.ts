@@ -7,5 +7,5 @@
  *   `approve`, wait for its receipt, then `fund`.
  */
 export function fundPath(atomicStatus: 'supported' | 'ready' | 'unsupported' | undefined): 'batch' | 'sequential' {
-  throw new Error('unimplemented');
+  return atomicStatus === 'supported' ? 'batch' : 'sequential';
 }

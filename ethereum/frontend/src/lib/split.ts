@@ -7,5 +7,6 @@ export const BPS_DENOMINATOR = 10_000n;
  * @example computeSplit(1001n, 1500) → { toSeller: 851n, refund: 150n }; computeSplit(500n, 10_000) → { toSeller: 0n, refund: 500n }
  */
 export const computeSplit = (principal: bigint, discountBps: number): { toSeller: bigint; refund: bigint } => {
-  throw new Error('unimplemented');
+  const refund = (principal * BigInt(discountBps)) / BPS_DENOMINATOR;
+  return { toSeller: principal - refund, refund };
 };

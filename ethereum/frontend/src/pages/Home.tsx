@@ -5,7 +5,7 @@ import { isAddress } from 'viem';
 const STEPS = [
   { step: '01', who: 'Seller', action: 'Creates an invoice with discount tiers and a due date, then shares the invoice address with the buyer.' },
   { step: '02', who: 'Buyer', action: 'Reviews the terms and locks the full invoice amount in escrow. The seller is guaranteed payment.' },
-  { step: '03', who: 'Either', action: 'Triggers payment. The contract applies the discount tier in force and pays both sides instantly.' },
+  { step: '03', who: 'Either', action: 'Triggers payment. The contract applies the discount tier in force and pays both sides in one transaction.' },
 ];
 
 export default function Home() {

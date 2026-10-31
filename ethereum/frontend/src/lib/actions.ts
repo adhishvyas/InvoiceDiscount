@@ -1,4 +1,4 @@
-import type { StatusValue } from './status';
+import { Status, type StatusValue } from './status';
 
 /** What the invoice page knows when it decides which buttons to show. */
 export interface ActionContext {
@@ -26,6 +26,8 @@ export interface VisibleActions {
   acceptAndSettle: boolean;
 }
 
+const same = (a: string | undefined, b: string): boolean => a !== undefined && a.toLowerCase() === b.toLowerCase();
+
 /**
  * Which actions to offer on the invoice page (spec §5.3). The contract has the final say.
  * Addresses compare case-insensitively. The buyer counts only once the invoice has left Active, so `buyer`
@@ -37,5 +39,17 @@ export interface VisibleActions {
  * - `acceptAndSettle`: the seller, Active, and `0 < cloneBalance < dueNow`.
  */
 export function visibleActions(ctx: ActionContext): VisibleActions {
-  throw new Error('unimplemented');
+  const connected = ctx.account !== undefined;
+  const isSeller = same(ctx.account, ctx.seller);
+  const isBuyer = ctx.status !== Status.Active && same(ctx.account, ctx.buyer);
+  const active = ctx.status === Status.Active;
+  const open = active || ctx.status === Status.Funded;
+  const paidInFull = ctx.cloneBalance > 0n && ctx.cloneBalance >= ctx.dueNow;
+  return {
+    fund: connected && !isSeller && active,
+    trigger: ctx.status === Status.Funded && (isSeller || isBuyer),
+    cancel: open && (isSeller || (isBuyer && ctx.now > ctx.dueDate)),
+    finishSettlement: connected && active && paidInFull,
+    acceptAndSettle: isSeller && active && ctx.cloneBalance > 0n && ctx.cloneBalance < ctx.dueNow,
+  };
 }

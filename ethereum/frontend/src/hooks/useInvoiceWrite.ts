@@ -1,48 +1,56 @@
 import { useCallback, useState } from 'react';
-import type { Address, Hex, TransactionReceipt } from 'viem';
-import { useConfig, useSendTransaction, useSendTransactionSync } from 'wagmi';
-import { waitForTransactionReceipt } from 'wagmi/actions';
-import { useWalletMode } from './useWalletMode';
+import type { Abi, Address, Hex, TransactionReceipt } from 'viem';
+import { sepolia } from 'viem/chains';
+import { useAccount, useConfig } from 'wagmi';
+import { sendCalls, waitForCallsStatus, waitForTransactionReceipt, writeContract } from 'wagmi/actions';
+import { friendlyError } from '../lib/errors';
 
 export interface Call {
-  to: Address;
-  data: Hex;
+  address: Address;
+  abi: Abi;
+  functionName: string;
+  args?: readonly unknown[];
 }
-
-/** The receipt fields callers use; the Tempo sync action types `status` more loosely than viem's receipt. */
-export type Receipt = Pick<TransactionReceipt, 'transactionHash' | 'logs'> & { status: string };
 
 export type WriteState =
   | { status: 'idle' }
-  | { status: 'pending' }
-  | { status: 'success'; receipts: Receipt[] }
-  | { status: 'error'; message: string };
-
-const errorMessage = (e: unknown): string =>
-  e instanceof Error ? ((e as { shortMessage?: string }).shortMessage ?? e.message) : String(e);
+  /** `hash` is set as soon as the wallet returns it (not for a batch, which has no hash until it is included). */
+  | { status: 'pending'; hash?: Hex }
+  | { status: 'success'; receipts: TransactionReceipt[] }
+  | { status: 'error'; message: string; hash?: Hex };
 
 /**
- * Sends one or more calls in order.
- * Tempo Wallet: a single atomic, fee-sponsored transaction carrying every call.
- * Injected wallet: one transaction per call, each confirmed before the next; the user pays fees.
+ * Sends one or more contract calls in order, on Sepolia, and waits for one confirmation each.
+ * `atomic`: one EIP-5792 `wallet_sendCalls` batch with `forceAtomic` (only when the wallet reports `supported`);
+ * otherwise one transaction per call, each confirmed before the next. Gas is paid in Sepolia ETH by the sender.
  */
 export function useInvoiceWrite() {
-  const mode = useWalletMode();
   const config = useConfig();
-  const sendSync = useSendTransactionSync();
-  const send = useSendTransaction();
+  const { isConnected, chainId } = useAccount();
   const [state, setState] = useState<WriteState>({ status: 'idle' });
+  /** Writes are disabled until the wallet switches to Sepolia. */
+  const wrongChain = isConnected && chainId !== sepolia.id;
 
   const run = useCallback(
-    async (calls: Call[]): Promise<Receipt[] | undefined> => {
+    async (calls: Call[], atomic = false): Promise<TransactionReceipt[] | undefined> => {
       setState({ status: 'pending' });
+      let hash: Hex | undefined;
       try {
-        const receipts: Receipt[] = [];
-        if (mode === 'tempo') {
-          receipts.push(await sendSync.mutateAsync({ calls, feePayer: true }));
+        const receipts: TransactionReceipt[] = [];
+        if (atomic) {
+          const { id } = await sendCalls(config, {
+            chainId: sepolia.id,
+            calls: calls.map(({ address, ...call }) => ({ to: address, ...call })),
+            forceAtomic: true,
+          });
+          const result = await waitForCallsStatus(config, { id });
+          hash = result.receipts?.[0]?.transactionHash;
+          if (result.status !== 'success' || !hash) throw new Error('Batch failed');
+          receipts.push(await waitForTransactionReceipt(config, { hash }));
         } else {
           for (const call of calls) {
-            const hash = await send.mutateAsync(call);
+            hash = await writeContract(config, { ...call, chainId: sepolia.id });
+            setState({ status: 'pending', hash });
             receipts.push(await waitForTransactionReceipt(config, { hash }));
           }
         }
@@ -50,13 +58,13 @@ export function useInvoiceWrite() {
         setState({ status: 'success', receipts });
         return receipts;
       } catch (e) {
-        setState({ status: 'error', message: errorMessage(e) });
+        setState({ status: 'error', message: friendlyError(e), hash });
         return undefined;
       }
     },
-    [mode, config, sendSync, send],
+    [config],
   );
 
   const reset = useCallback(() => setState({ status: 'idle' }), []);
-  return { state, run, reset };
+  return { state, run, reset, wrongChain };
 }

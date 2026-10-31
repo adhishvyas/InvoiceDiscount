@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { encodeFunctionData, erc20Abi, parseEventLogs, zeroAddress, type Address } from 'viem';
+import { erc20Abi, parseEventLogs, zeroAddress, type Address } from 'viem';
 import { useAccount, usePublicClient, useReadContract } from 'wagmi';
 import { invoiceFactoryAbi } from '../abi/InvoiceFactory';
-import { DEFAULT_TOKEN, FACTORY_ADDRESS, FACTORY_DEPLOY_BLOCK, TOKENS } from '../config';
+import { DEFAULT_TOKEN, EXPLORER_URL, FACTORY_ADDRESS, FACTORY_DEPLOY_BLOCK, TOKENS } from '../config';
 import { useInvoiceWrite } from '../hooks/useInvoiceWrite';
 import { findExistingInvoice } from '../lib/logs';
 import { REF_MAX_BYTES, encodeRef, refByteLength } from '../lib/ref';
@@ -40,7 +40,7 @@ function Field({ label, error, hint, children }: { label: string; error?: string
 export default function CreateInvoice() {
   const { address } = useAccount();
   const client = usePublicClient();
-  const { state, run, reset } = useInvoiceWrite();
+  const { state, run, reset, wrongChain } = useInvoiceWrite();
 
   const [invoiceRef, setInvoiceRef] = useState('');
   const [amount, setAmount] = useState('');
@@ -59,8 +59,9 @@ export default function CreateInvoice() {
     return () => clearInterval(timer);
   }, []);
 
+  // Amounts use the token's own decimals; nothing can be submitted until they are read.
   const { data: tokenDecimals } = useReadContract({ address: token, abi: erc20Abi, functionName: 'decimals' });
-  const decimals = tokenDecimals ?? 6;
+  const decimals = tokenDecimals ?? 0;
 
   // A single untouched row means the seller chose no discounts; any edited row is validated as usual.
   const noTiers = tiers.every((t) => t.cutoff === '' && t.discountPercent === '');
@@ -112,7 +113,7 @@ export default function CreateInvoice() {
     setTiers((rows) => rows.map((r, j) => (j === i ? { ...r, ...patch } : r)));
 
   const submit = async (confirmedNoTiers = false) => {
-    if (!canCheck || !address || !FACTORY_ADDRESS || !valid) return;
+    if (!canCheck || !address || !FACTORY_ADDRESS || !valid || tokenDecimals === undefined || wrongChain) return;
     if (noTiers && !confirmedNoTiers) {
       setNoTiersWarning(true);
       return;
@@ -130,19 +131,21 @@ export default function CreateInvoice() {
       return;
     }
 
-    const data = encodeFunctionData({
-      abi: invoiceFactoryAbi,
-      functionName: 'createInvoice',
-      args: [
-        encodeRef(invoiceRef),
-        token,
-        toUnits(amount.trim(), decimals),
-        BigInt(toUnix(dueDate)!),
-        activeTiers.map((t) => ({ cutoff: BigInt(toUnix(t.cutoff)!), discountBps: percentToBps(t.discountPercent)! })),
-        (payout.trim() || zeroAddress) as Address,
-      ],
-    });
-    const receipts = await run([{ to: FACTORY_ADDRESS, data }]);
+    const receipts = await run([
+      {
+        address: FACTORY_ADDRESS,
+        abi: invoiceFactoryAbi,
+        functionName: 'createInvoice',
+        args: [
+          encodeRef(invoiceRef),
+          token,
+          toUnits(amount.trim(), decimals),
+          BigInt(toUnix(dueDate)!),
+          activeTiers.map((t) => ({ cutoff: BigInt(toUnix(t.cutoff)!), discountBps: percentToBps(t.discountPercent)! })),
+          (payout.trim() || zeroAddress) as Address,
+        ],
+      },
+    ]);
     const logs = receipts?.flatMap((r) => parseEventLogs({ abi: invoiceFactoryAbi, logs: r.logs, eventName: 'InvoiceCreated' }));
     if (logs?.[0]) setCreated(logs[0].args.invoice);
   };
@@ -189,7 +192,7 @@ export default function CreateInvoice() {
         <Field
           label="Invoice reference"
           error={errors.invoiceRef}
-          hint={`${refBytes}/${REF_MAX_BYTES} bytes. Also recorded as the memo on every payment.`}
+          hint={`${refBytes}/${REF_MAX_BYTES} bytes. Also recorded in every on-chain event of the invoice.`}
         >
           <input
             value={invoiceRef}
@@ -209,7 +212,11 @@ export default function CreateInvoice() {
         {checkError && <p className="text-xs text-amber-300 -mt-3">Could not check for duplicates: {checkError}</p>}
 
         <div className="grid grid-cols-2 gap-4">
-          <Field label="Amount" error={errors.amount}>
+          <Field
+            label="Amount"
+            error={tokenDecimals === undefined ? undefined : errors.amount}
+            hint={tokenDecimals === undefined ? 'Reading the token’s decimals…' : undefined}
+          >
             <input value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="100000" inputMode="decimal" className={inputClass} />
           </Field>
           <Field label="Token" error={errors.token}>
@@ -304,14 +311,29 @@ export default function CreateInvoice() {
       )}
       <button
         onClick={() => void submit()}
-        disabled={!canCheck || !valid || Boolean(duplicate) || pending}
+        disabled={!canCheck || !valid || tokenDecimals === undefined || wrongChain || Boolean(duplicate) || pending}
         className={`${noTiersWarning && noTiers ? 'mt-4' : 'mt-8'} w-full bg-indigo-600 hover:bg-indigo-500 font-medium px-6 py-3 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed`}
       >
-        {pending ? 'Creating…' : address ? 'Create invoice' : 'Connect a wallet to create'}
+        {pending ? 'Creating…' : !address ? 'Connect a wallet to create' : wrongChain ? 'Switch to Sepolia to create' : 'Create invoice'}
       </button>
+      {state.status === 'pending' && state.hash && (
+        <p className="text-sm text-slate-400 mt-3">
+          Waiting for confirmation (about 12 s).{' '}
+          <a href={`${EXPLORER_URL}/tx/${state.hash}`} target="_blank" rel="noreferrer" className="underline">
+            View transaction
+          </a>
+        </p>
+      )}
       {state.status === 'error' && (
         <p className="text-sm text-red-400 mt-3">
           {state.message}{' '}
+          {state.hash && (
+            <>
+              <a href={`${EXPLORER_URL}/tx/${state.hash}`} target="_blank" rel="noreferrer" className="underline">
+                View transaction
+              </a>{' '}
+            </>
+          )}
           <button onClick={reset} className="underline">
             Dismiss
           </button>

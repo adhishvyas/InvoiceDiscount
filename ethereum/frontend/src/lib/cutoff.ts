@@ -12,5 +12,9 @@ export function upcomingCutoff(
   now: bigint,
   windowSeconds = 300n,
 ): bigint | undefined {
-  throw new Error('unimplemented');
+  let next: bigint | undefined;
+  for (const { cutoff } of tiers) {
+    if (now < cutoff && cutoff - now < windowSeconds && (next === undefined || cutoff < next)) next = cutoff;
+  }
+  return next;
 }

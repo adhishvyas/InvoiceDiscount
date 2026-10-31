@@ -8,7 +8,7 @@ export default function Layout() {
         <Link to="/" className="text-lg font-semibold tracking-tight">InvoiceDiscount</Link>
         <div className="flex items-center gap-4">
           <span className="hidden sm:inline text-xs font-medium bg-indigo-950 text-indigo-300 border border-indigo-800 px-3 py-1 rounded-full">
-            Tempo Testnet
+            Sepolia Testnet
           </span>
           <ConnectButton />
         </div>

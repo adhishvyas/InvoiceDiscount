@@ -206,12 +206,16 @@ Apply S1's corrections to the spec (token table, any API name changes, `LOG_PAGE
 
 ### T1 — Harness + mock tokens (Sonnet agent A)
 
+> **Status:** ✅ **Completed** 2026-10-30, branch `ethereum-contract-tests` (`162d737`). Mocks plus 6 harness self-tests.
+
 - Port `tempo/contracts/test/unit/Base.t.sol`. Replace the TIP-20 setup with `test/mocks/MockERC20.sol` (OpenZeppelin `ERC20`, 6 decimals, public `mint`). Keep the named actors and helpers.
 - New mocks in `test/mocks/` for the spec §6 cases: `NoReturnToken` (USDT-style, no return value), `FalseReturnToken` (returns `false`), `ReentrantToken` (calls back into the escrow during `transfer`), and an `18`-decimal `MockERC20` for amount tests.
 
 **Verify:** `forge build`; a harness self-test mints and transfers each mock.
 
 ### T2 — Unit tests, ported + new (Sonnet agent A)
+
+> **Status:** ✅ **Completed** 2026-10-30. 154 unit tests (133 ported, 15 new, 6 harness); 148 red against the stubs, the 6 harness tests justified in `test/SPEC_QUESTIONS.md`. 3 new spec questions.
 
 - Port `InvoiceEscrow.t.sol`, `InvoiceEscrowEdge.t.sol`, `InvoiceEscrowSettleDirect.t.sol` and `InvoiceFactory.t.sol`:
   - `TransferWithMemo` assertions → `vm.expectEmit` on the escrow event with `invoiceRef`, plus the ERC-20 `Transfer` event for amounts and recipients.
@@ -223,12 +227,16 @@ Apply S1's corrections to the spec (token table, any API name changes, `LOG_PAGE
 
 ### T3 — Fork tests on Sepolia (Sonnet agent A)
 
+> **Status:** ✅ **Completed** 2026-10-30. 11 fork tests, all red against the stubs; `deal` used for funding.
+
 - Port `tempo/contracts/test/fork/InvoiceFork.t.sol` to Sepolia: `test_Fork_PyusdLifecycle`, `test_Fork_UsdcLifecycle` (create, fund, pay with a discount, cancel), `InvalidToken` against an EOA, and the `createInvoice` gas snapshot with 0, 3 and 10 tiers.
 - Fund actors with `deal`, or a holder `prank` if S1 item 5 says `deal` fails.
 
 **Verify:** compiles; red against the stubs under `SEPOLIA_RPC_URL=… FOUNDRY_PROFILE=fork forge test`; plain `forge test` skips `test/fork/`.
 
 ### M1 — Contract merge + triage (main session; user decides spec gaps)
+
+> **Status:** 🔶 **In progress.** Merged (`28246ae`): 154 unit and 11 fork tests pass, 100% coverage of `src/`, 0 impl bugs, 0 test bugs. Waiting on the user's decision on 3 spec gaps; see [`test-lane-findings.md`](test-lane-findings.md).
 
 As Tempo M1:
 1. Merge the test branch into the contract branch.

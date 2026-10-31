@@ -67,6 +67,7 @@ InvoiceDiscount is an invoice discounting smart contract project, implemented se
 
 - `stellar/` — Soroban (Rust) contract workspace, React frontend, docs
 - `tempo/` — Tempo implementation (in progress)
+- `ethereum/` — Ethereum implementation (planned; Mesh Pay now spec in `ethereum/docs/`)
 
 Shared at the root: `ProjectVision.txt`, `README.md`, `claude-plans/`.
 

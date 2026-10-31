@@ -26,4 +26,6 @@ export const encodeRef = (s: string): Hex => {
 };
 
 /** bytes32 back to the reference string, without the zero padding. `decodeRef(encodeRef(s)) === s.trim()`. */
-export const decodeRef = (b: Hex): string => hexToString(b, { size: REF_MAX_BYTES });
+export const decodeRef = (b: Hex): string =>
+  // viem leaves one zero byte when the value is all zeros; drop any trailing padding.
+  hexToString(b, { size: REF_MAX_BYTES }).replace(/\0+$/, '');

@@ -63,7 +63,7 @@ export const invoiceEscrowAbi = [
     "inputs": [],
     "outputs": [
       {
-        "name": "state",
+        "name": "",
         "type": "tuple",
         "internalType": "struct InvoiceState",
         "components": [
@@ -425,6 +425,17 @@ export const invoiceEscrowAbi = [
     "type": "error",
     "name": "NothingToSettle",
     "inputs": []
+  },
+  {
+    "type": "error",
+    "name": "SafeERC20FailedOperation",
+    "inputs": [
+      {
+        "name": "token",
+        "type": "address",
+        "internalType": "address"
+      }
+    ]
   },
   {
     "type": "error",

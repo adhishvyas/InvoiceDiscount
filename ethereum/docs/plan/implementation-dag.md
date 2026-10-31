@@ -311,6 +311,8 @@ Port `Home`, `CreateInvoice` and `InvoiceDetail` per spec §5.3:
 
 ### U1 — Vitest suites, ported + new (Sonnet agent B)
 
+> **Status:** ✅ **Completed** 2026-10-30, branch `ethereum-frontend-tests`. 165 tests (~55 ported, ~110 new); 150 red against the stubs, 15 green (config and constants, justified in `frontend/SPEC_QUESTIONS.md`). 4 spec questions.
+
 - Port `lib.test.ts`, `logs.test.ts`, `history.test.ts`, `historyCache.test.ts`, `actions.test.ts` and `config.test.ts` from `tempo/frontend/src/` to the frozen signatures. Drop the MPP cases; history fixtures use ERC-20 `Transfer` and `invoiceRef`.
 - New tests: `fundPath` for every capability status; `upcomingCutoff` (no tiers, cutoff inside/outside/exactly at the window edge, past cutoffs); `friendlyError` for viem's insufficient-funds error and a pass-through; `toUnits`/`fromUnits` at 18 decimals; `visibleActions` for every role × status × before/after due date × clone balance.
 - Ambiguities go in `frontend/SPEC_QUESTIONS.md`.
@@ -318,6 +320,8 @@ Port `Home`, `CreateInvoice` and `InvoiceDetail` per spec §5.3:
 **Verify:** red check: `corepack pnpm test` against the stubs fails every test except `config.test.ts`, which tests data that F2 wrote in full (justified in `SPEC_QUESTIONS.md`). Committed on the test branch.
 
 ### M2 — Frontend merge + triage (main session)
+
+> **Status:** ✅ **Completed** 2026-10-30 (`670c90a`). Test (165), build and lint pass. 2 impl bugs and 1 test bug fixed by their owners; frontend spec gap 7 is waiting on the user together with M1's. See [`test-lane-findings.md`](test-lane-findings.md).
 
 1. Merge the frontend branch and the frontend test branch; run `corepack pnpm sync-abi` against the M1 contracts.
 2. `corepack pnpm test`, `build`, `lint`.

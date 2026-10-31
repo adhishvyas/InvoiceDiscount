@@ -247,6 +247,8 @@ As Tempo M1:
 
 ### F1 — Frontend scaffold (frontend agent)
 
+> **Status:** ✅ **Completed** 2026-10-30 on branch `ethereum-frontend`. `pnpm install` (wagmi 3.7.7, viem 2.57.7) and `sync-abi` pass.
+
 - Copy `tempo/frontend/` to `ethereum/frontend/`, without `node_modules`, `dist`, `.env`, `src/abi/*`, and **without any `*.test.ts`** (those belong to agent B).
 - Don't copy `lib/mpp.ts` and `hooks/useMppPay.ts`. Remove `accounts` and `mppx` from `package.json`; rename the package `invoice-discount-ethereum`.
 - `scripts/sync-abi.mjs`: one output directory (`src/abi/`), no mpp-server.
@@ -255,6 +257,8 @@ As Tempo M1:
 **Verify:** `corepack pnpm install` and `sync-abi` succeed. The build doesn't have to pass yet.
 
 ### F2 — Frontend lib freeze (frontend agent)
+
+> **Status:** ✅ **Completed** 2026-10-30, tag `ethereum-frontend-interface-v1` (`b9114d2`). `src/lib/` + `config.ts` type-check (with `noUnusedParameters` off for the stubs); every export has TSDoc. Agent decisions: `upcomingCutoff` is strict at both ends (`now < cutoff`, `cutoff - now < window`); `friendlyError` detects viem `InsufficientFundsError` in the cause chain or `/insufficient funds/i`; history `created` entry has no `invoiceRef`; `config.ts` adds `RPC_URL` and `ETH_FAUCET_URL`.
 
 The frontend's black-box boundary is `src/lib/`. These are the pure modules the Tempo Vitest suites test; hooks and pages aren't unit-tested, as on Tempo.
 - For **every** file in `src/lib/`: final exported types, constants and function signatures, TSDoc on each export (inputs, outputs, edge cases), and bodies that `throw new Error('unimplemented')`. That includes the unchanged files, so agent B sees no implementation at all.

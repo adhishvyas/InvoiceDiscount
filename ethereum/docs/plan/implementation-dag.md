@@ -177,6 +177,8 @@ Apply S1's corrections to the spec (token table, any API name changes, `LOG_PAGE
 
 ### C2 — Contract interface freeze (main session)
 
+> **Status:** ✅ **Completed** 2026-10-30, tag `ethereum-interface-v1`. Storage layout matches spec §3.3 (slot 0 packed, tiers at slot 7). Frozen ABIs saved in `contracts/abi/`. ABI diff against Tempo: `NotTIP20` → `InvalidToken`, and `bytes32 indexed invoiceRef` added to `Funded`, `Paid`, `Cancelled`, `SettledDirect`; nothing else. Note: OpenZeppelin library errors appear in the ABI only once a body uses the library, so after C3/C4 the escrow ABI also lists `SafeERC20FailedOperation(address)` and the factory ABI `FailedDeployment()` and `InsufficientBalance(uint256,uint256)` (as Tempo's factory ABI does). Those are the only allowed ABI differences from the tag.
+
 - Copy `tempo/contracts/src/InvoiceEscrow.sol` and `InvoiceFactory.sol` (tag `tempo-interface-v2`), then apply the signature-level changes from the reuse map: imports, `InvalidToken`, the four events with `bytes32 indexed invoiceRef`.
 - **Replace every function body with a stub** (`revert("unimplemented")`, or a zero value for views). The factory constructor still deploys the implementation.
 - Rewrite the NatSpec so it describes the Ethereum behaviour (spec §3.5): check order and the error for each check, effects, the `SafeERC20` calls, events. This is the test agent's contract.

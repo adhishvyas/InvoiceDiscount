@@ -76,7 +76,9 @@ export const validateInvoiceForm = (
   else if (refBytes > REF_MAX_BYTES) errors.invoiceRef = `Reference is ${refBytes} bytes; the limit is ${REF_MAX_BYTES}`;
 
   const amount = input.amount.trim();
-  if (!new RegExp(`^\\d+(\\.\\d{1,${input.decimals}})?$`).test(amount)) {
+  // A 0-decimals token takes whole numbers only (`\d{1,0}` is not a valid quantifier).
+  const fraction = input.decimals > 0 ? `(\\.\\d{1,${input.decimals}})?` : '';
+  if (!new RegExp(`^\\d+${fraction}$`).test(amount)) {
     errors.amount = `Enter an amount with at most ${input.decimals} decimals`;
   } else {
     const units = toUnits(amount, input.decimals);

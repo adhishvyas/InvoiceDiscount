@@ -54,5 +54,5 @@ export interface MeshSessionStart {
 
 /** Whether to stop polling a session: true for `settled`, `failed` and `needs-attention`, false for the other three. */
 export function isFinalMeshState(state: SessionState): boolean {
-  throw new Error('unimplemented');
+  return state === 'settled' || state === 'failed' || state === 'needs-attention';
 }

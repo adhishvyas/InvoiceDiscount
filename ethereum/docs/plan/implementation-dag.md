@@ -248,7 +248,9 @@ As Tempo M1:
 
 ### C5 — Sepolia deploy (user broadcasts)
 
-- Claude gives the exact command (spec §7): `forge script script/Deploy.s.sol --rpc-url $SEPOLIA_RPC_URL --account sepolia-deployer --broadcast --verify --verifier sourcify` (no API key).
+> **Status:** ✅ **Completed** 2026-11-03. Factory `0x58B4989074B20af8331C048D7535c70f534299d4`, implementation `0x1619ba96564c733204173cC201f1B9D3Ab9280d1`, block 12056811 (tx `0xfabc9f04…cb7e4`, 9,772,354 gas). Both verified on Sourcify (`exact_match`); `implementation()` returns the implementation. The first two broadcasts ran out of gas: forge's local simulation (about 1.4M gas) underestimates what Sepolia charges to store contract code (about 9.8M), so the command now has `--gas-estimate-multiplier 800`.
+
+- Claude gives the exact command (spec §7): `forge script script/Deploy.s.sol --rpc-url $SEPOLIA_RPC_URL --account sepolia-deployer --broadcast --verify --verifier sourcify --gas-estimate-multiplier 800` (no API key).
 - Write `ethereum/contracts/deployments/sepolia.json` with `{ factory, implementation, deployBlock }`.
 
 **Verify:** both contracts verified on Sourcify (and shown as verified on Sepolia Etherscan); `cast call <factory> "implementation()(address)"` returns the implementation.

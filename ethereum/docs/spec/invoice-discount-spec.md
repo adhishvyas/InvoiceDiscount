@@ -378,7 +378,7 @@ ethereum/
 ```
 
 - Build / test: `forge build`, `forge test -vvv`. Fork suite: `SEPOLIA_RPC_URL=<url> FOUNDRY_PROFILE=fork forge test -vvv`.
-- Deploy (the user broadcasts): `forge script script/Deploy.s.sol --rpc-url $SEPOLIA_RPC_URL --account sepolia-deployer --broadcast --verify --verifier sourcify`. No API key is needed. The deployer needs Sepolia ETH.
+- Deploy (the user broadcasts): `forge script script/Deploy.s.sol --rpc-url $SEPOLIA_RPC_URL --account sepolia-deployer --broadcast --verify --verifier sourcify --gas-estimate-multiplier 800`. No API key is needed. The deployer needs Sepolia ETH. The multiplier is needed because Sepolia charges about 7× more gas to store contract code than forge 1.8.5's local simulation (the factory deploy uses about 9.8M gas); without it the deploy runs out of gas.
 - Frontend: `corepack pnpm dev | build | lint | test`, and `corepack pnpm sync-abi` after a contract change (frontend ABIs only).
 - Testnet funds: Sepolia ETH from a faucet; PYUSD and USDC from the faucets in §5.1.
 

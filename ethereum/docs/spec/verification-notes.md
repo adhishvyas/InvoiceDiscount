@@ -31,5 +31,5 @@
 ## Still unverified (to settle later, not blocking the freeze)
 
 - MetaMask's actual `wallet_getCapabilities` result on Sepolia (F3 / I1).
-- Sourcify `--verify --verifier sourcify` end to end (C5).
+- Sourcify `--verify --verifier sourcify` end to end (C5). ✅ Confirmed 2026-11-03: both contracts `exact_match`.
 - Mesh's Sepolia token contracts (item 1d, Mesh plan).

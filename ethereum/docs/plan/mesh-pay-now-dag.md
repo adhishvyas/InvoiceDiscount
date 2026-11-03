@@ -123,7 +123,7 @@ After the two tags, four agents work at once: V3–V5 (main session), T1 (A), F2
 ### P0 — Prerequisites (user runs)
 
 - Mesh dashboard (sandbox): an API key with Read & Write, **Allowed domains** includes `http://localhost:5173`.
-- Tunnel: `ngrok http 8788 --domain=<your-static-domain>`. Register `https://<domain>/webhooks/mesh` as the sandbox webhook URL and keep the signing secret (shown once).
+- Tunnel: `ngrok http 8788 --domain=<your-static-domain>`. Register `https://<domain>/webhooks/mesh` as the sandbox webhook URL and keep the signing secret (shown once). **v2:** register it under **Account > Webhooks** in the sandbox, subscribed to `transfer.status_updated`.
 - Settler key: `cast wallet new`; fund the address with Sepolia ETH (a faucet; ~0.05 ETH is plenty).
 - The port's buyer MetaMask account on Sepolia with PYUSD and some ETH (from the port's P0).
 
@@ -131,7 +131,7 @@ After the two tags, four agents work at once: V3–V5 (main session), T1 (A), F2
 
 ### S1 — Mesh spike (main session)
 
-> **Status:** ⛔ **Blocked** 2026-11-03 on authentication. The dashboard issued `mk_live_…` keys for `api.sbx.meshpay.com` and `api.meshpay.com`; every read-only call returns `401 "provide a valid Bearer token"` with `X-Client-*` headers and with the key as a Bearer token (also on the `integration-api` hosts). The user has asked their Mesh contact. Fallbacks in spec §6.1. Step 1's script is in the scratchpad (`s1/discover.mjs`); it prints responses only.
+> **Status:** ✅ **Completed** 2026-11-03 with the Mesh developer MCP server (the docs this plan first followed describe Mesh's **legacy** API). Auth (OAuth client credentials), session creation on `eip155:11155111` for PYUSD/USDG/USDC/ETH, and the health check probed live; webhook, signature and SDK formats from the v2 docs and OpenAPI schema. Results: [`verification-notes.md` → Mesh pay-now spike](../spec/verification-notes.md#mesh-pay-now-spike-s1-of-planmesh-pay-now-dagmd). The changes go through the [v2 sub-DAG](#mesh-pay-v2-change-after-s1). Open: whether Link offers an ERC-20 wallet transfer on Sepolia (first step of I1).
 
 Resolve the items in [What depends on the spike](#what-depends-on-the-spike-s1) with throwaway scripts in the scratchpad (not checked in), using the user's sandbox keys from a local `.env` in the scratchpad:
 
@@ -366,6 +366,8 @@ As port M2: merge the frontend branch and U1's branch; `corepack pnpm test`, `bu
 
 mesh-server running with real sandbox keys, behind the tunnel. On a new PYUSD invoice:
 
+- **First:** open Link (frontend, sandbox) on a PYUSD session from MetaMask on Sepolia and see whether it offers the PYUSD transfer. If not, record it, ask Mesh to enable ERC-20 on Sepolia, and continue I1/I2 with the exchange-plus-manual-transfer fallback (spec §6.2).
+
 - `curl -X POST …/mesh-session` → `201` with a `linkToken`; amount equals the page's "If paid now" (or the next tier's, if a cutoff is within 15 min).
 - `curl` with a non-clone → 404; on a USDC invoice → 422.
 - A hand-signed `curl` webhook with `TransferStatus: Succeeded` for the session and a made-up `TxHash` → after 180 s, `needs-attention: insufficient balance`; the invoice stays Active.
@@ -390,6 +392,66 @@ Add Mesh spec §6.3's section to [`../e2e-checklist.md`](../e2e-checklist.md) an
 - Mesh spec status → implemented; link the findings summary.
 
 **Verify:** the user reviews.
+
+---
+
+## Mesh Pay v2 change (after S1)
+
+S1 found that the server (V2–V5) and the frontend hook (F3) were built against Mesh's legacy API. The v2 API changes auth, the session call, the webhook envelope and signature, and the Link SDK (spec §2, §4.3, §5; explainer §3–§6). It's an interface change, so it follows the same rules: frozen stubs, a new tag, Sonnet test updates, merge and triage. User decisions (2026-11-03): build for PYUSD/USDG and check ERC-20 support in Link at I1; keep the 900 s window with the quote's own 600 s expiry; show provider and sender only (no refund address).
+
+```mermaid
+flowchart TD
+    S3["S3 Spec + explainer for v2"]
+    V6["V6 Server interface v2 freeze<br/>tag ethereum-mesh-server-interface-v2<br/>(on the v1 stub lineage)"]
+    T2["T2 Server tests updated, red<br/>(Sonnet A)"]
+    V7["V7 Server v2 implementation"]
+    M3["M3 Server merge + triage"]
+    F5["F5 lib types + SDK swap<br/>tag ethereum-frontend-interface-v3"]
+    M4["M4 Frontend merge + checks"]
+    I1["I1 Server smoke on Sepolia<br/>(first: ERC-20 in Link?)"]
+
+    S3 --> V6
+    V6 --> T2 --> M3
+    V6 --> V7 --> M3
+    V6 --> F5 --> M4
+    M3 --> I1
+    M4 --> I1
+```
+
+### S3 — Spec and explainer for v2 (main session)
+
+> **Status:** ✅ **Completed** 2026-11-03. Explainer rewritten for v2; spec §1–§8 amended (with M1 findings 14 and 15 folded in); S1 results in the verification notes. The user asked for these updates; review in the summary.
+
+### V6 — Server interface v2 freeze (main session)
+
+The v2 stubs are committed on a branch from `ethereum-mesh-server-interface-v1`, **not** from the implementation branch, so every body the test agent sees is still a stub. Changed modules: `mesh.ts` (OAuth client with token cache, `POST /v2/sessions` body and headers), `signature.ts` (timestamped hex HMAC, 300 s tolerance), `webhook.ts` (v2 envelope, status mapping), `sessions.ts` (`Payer` without `refundAddress`), `app.ts` (`networkCaip2`, `linkEnvironment`, the `201` body gains `clientId` and `linkEnvironment`, webhook headers), `quote.ts` (`toMeshAmount` removed), `env.ts`, `index.ts`. Tag `ethereum-mesh-server-interface-v2`.
+
+**Verify:** typecheck; every changed export has TSDoc; the implementation branch merges the tag with conflicts only in the stubbed files.
+
+### T2 — Server tests updated, red against the v2 stubs (Sonnet agent A)
+
+Agent A merges the v2 tag into `ethereum-mesh-server-tests` and updates its suite: `fakeChain` helpers (`sign` with timestamp, v2 `webhookEvent`, a fake `fetch` serving both `/oauth2/token` and `/v2/sessions`), `mesh.test.ts`, `signature.test.ts` (Mesh's test vector, stale/future timestamps), `webhook.test.ts`, `app.test.ts`; `toMeshAmount` tests dropped. Same isolation rules.
+
+**Verify:** typecheck; every changed or new test red against the v2 stubs; report lists files read.
+
+### V7 — Server v2 implementation (main session)
+
+Merge the v2 tag into `ethereum-mesh-pay-now`, take the stubs in conflicted files, and implement them. Unchanged modules keep their M1-tested bodies.
+
+**Verify:** typecheck; declarations identical to the v2 tag; live: mint a token and create a session for an Active PYUSD invoice through `POST …/mesh-session`.
+
+### M3 — Server merge + triage (main session)
+
+As M1, logged under "Mesh pay-now: mesh-server v2" in `test-lane-findings.md`.
+
+### F5 — Frontend lib types and SDK swap (frontend agent)
+
+`lib/meshSession.ts`: `Payer` drops `refundAddress`; `MeshSessionStart` gains `clientId` and `linkEnvironment` (`'sbx' | 'prod'`). Type-only, so there are no new behaviour tests (U2 is not needed; existing tests must still compile). Tag `ethereum-frontend-interface-v3`. Then: replace `@meshconnect/web-link-sdk` with `@meshpayhq/link-web-sdk` (exact latest version, API from its `.d.ts`), `openLink` with `onExit` → poll and `onError`, still lazily loaded; "Paid via Mesh" shows provider and sender.
+
+### M4 — Frontend merge + checks (main session)
+
+Merge; `corepack pnpm test`, `build`, `lint`.
+
 
 ---
 

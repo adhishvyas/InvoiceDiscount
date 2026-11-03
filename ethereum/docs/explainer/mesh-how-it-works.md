@@ -1,14 +1,14 @@
 # How Mesh Works: APIs and Integration
 
-> An explainer for the Pay with Mesh feature ([`../spec/mesh-pay-now-spec.md`](../spec/mesh-pay-now-spec.md)). Based on the Mesh docs at [docs.meshconnect.com](https://docs.meshconnect.com), read October 2026.
+> An explainer for the Pay with Mesh feature ([`../spec/mesh-pay-now-spec.md`](../spec/mesh-pay-now-spec.md)). Rewritten November 2026 for the **Mesh Pay v2 API** (`api.meshpay.com`), from the Mesh developer MCP server's docs and OpenAPI schema. An earlier version followed the public docs at docs.meshconnect.com, which describe Mesh's **legacy** integration API (`integration-api.meshconnect.com`, `X-Client-Id`/`X-Client-Secret` headers, `/api/v1/linktoken`, `@meshconnect/web-link-sdk`). The dashboard's keys don't work there. What was probed live is in [`../spec/verification-notes.md`](../spec/verification-notes.md) (Mesh pay-now spike).
 
 ---
 
 ## 1. What Mesh is
 
-Mesh (meshconnect.com, also sold as MeshPay) is a **crypto payments network**. It lets a user pay from accounts they already have, such as an exchange account (Coinbase, Binance, Robinhood, Uphold, Cash App, OKX Pay and others) or a self-custody wallet (MetaMask, Phantom, Rainbow, Ledger, and 300+ WalletConnect wallets), without our app integrating each one.
+Mesh (also sold as Mesh Pay) is a **crypto payments network**. It lets a user pay from accounts they already have, such as an exchange account (Coinbase, Binance and others) or a self-custody wallet (MetaMask, Phantom, Rainbow and 170+ more through WalletConnect), without our app integrating each one.
 
-Mesh handles the parts that differ for every source: logins, MFA, OAuth, wallet connections, choosing the network, previewing fees, compliance checks, and the transfer itself. We tell Mesh *where the money should go and how much*, and Mesh gets it there.
+Mesh handles the parts that differ for every source: logins, MFA, wallet connections, choosing the network, routing and quoting, compliance checks, and the transfer itself. We tell Mesh *where the money should go and how much*, and Mesh gets it there.
 
 The thing to understand: **Mesh doesn't hold the money in between.** The transfer goes on-chain from the user's account straight to the address we give. For us, that's the invoice clone.
 
@@ -16,29 +16,28 @@ The thing to understand: **Mesh doesn't hold the money in between.** The transfe
 
 ## 2. The three parties
 
-Every integration has the same three parties:
-
 ```
    OUR SERVER                     OUR FRONTEND                        MESH
   (mesh-server)                 (browser, Link SDK)          (API + hosted Link UI)
        │                                │                              │
        │◄──── 1. "pay invoice 0x…" ─────│                              │
-       │──── 2. POST /api/v1/linktoken ─┼─────────────────────────────►│
-       │◄───────────────────────────────┼──────────── linkToken ───────│
-       │───── 3. linkToken ────────────►│                              │
-       │                                │── 4. openLink(linkToken) ───►│  user connects
-       │                                │                              │  Coinbase / MetaMask,
+       │──── 2a. POST /oauth2/token ────┼─────────────────────────────►│  (cached ~30 min)
+       │──── 2b. POST /v2/sessions ─────┼─────────────────────────────►│
+       │◄───────────────────────────────┼──── token (exchange code) ───│
+       │───── 3. token, clientId ──────►│                              │
+       │                                │── 4. openLink(token, …) ────►│  user connects
+       │                                │                              │  MetaMask / Coinbase,
        │                                │                              │  approves transfer
-       │                                │◄── 5. onTransferFinished ────│
+       │                                │◄────────── 5. onExit ────────│  (paid or not)
        │                                │                              │── 6. transfer ──► chain
-       │◄───────────────────────────────┼──── 7. webhook: Succeeded ───│
+       │◄───────────────────────────────┼── 7. webhook transfer.completed
        │── 8. settleDirect() ───────────┼──────────────────────────────┼───────────────► chain
 ```
 
 | Party | Does | Holds |
 |---|---|---|
-| **Our server** | Creates sessions (Link Tokens), receives webhooks, makes business decisions | Mesh API key, webhook secret |
-| **Our frontend** | Shows a button, opens Link, reacts to callbacks | Only the short-lived Link Token |
+| **Our server** | Mints OAuth tokens, creates sessions, receives webhooks, makes business decisions | Client secret, webhook signing secret |
+| **Our frontend** | Shows a button, opens Link, polls our server | The single-use session token and the (public) client id |
 | **Mesh** | Runs the whole user journey and the transfer, then reports the outcome | The user's connections |
 
 ---
@@ -47,174 +46,174 @@ Every integration has the same three parties:
 
 | | Sandbox | Production |
 |---|---|---|
-| Base URL | `https://sandbox-integration-api.meshconnect.com` | `https://integration-api.meshconnect.com` |
-| API key prefix | `sk_sandbox_…` | production key |
-| Funds | Simulated exchanges, plus real **testnet** wallet transfers | Real |
+| API host | `https://api.sbx.meshpay.com` | `https://api.meshpay.com` |
+| Link SDK `environment` | `'sbx'` (Link at `link.sbx.meshpay.com`) | `'prod'` (default) |
+| Funds | Mock exchanges; wallet transfers on public testnets | Real |
 
-Every API call sends two headers:
+Auth is **OAuth 2.0 client credentials**, the only scheme in every environment:
 
+```bash
+curl -X POST https://api.sbx.meshpay.com/oauth2/token \
+  -u "$MESH_CLIENT_ID:$MESH_CLIENT_SECRET" \
+  -d grant_type=client_credentials \
+  -d audience=api.sbx.meshpay.com \
+  -d "scope=sessions:edit"
 ```
-X-Client-Id:     <our Mesh Client ID>
-X-Client-Secret: <our API key>
-```
 
-Because the secret is in every request, **all Mesh API calls are made server-side**. The browser never sees the key.
+- HTTP **Basic** auth only; credentials in the form body are rejected.
+- `audience` is the API host.
+- The response is `{ access_token, token_type: "Bearer", expires_in, scope }`. `expires_in` was 1799 s in the sandbox. Cache the token on the server and mint a new one shortly before it expires.
+- Every `/v2` call sends `Authorization: Bearer <access_token>`.
+- Every `/v2` **POST** also sends an `Idempotency-Key` header (printable ASCII, up to 128 characters, kept 24 h per client). Reusing a key on a retry avoids duplicate side effects.
+- Errors use one envelope: `{ error: { code, message, requestId, details } }`.
 
-Access is invite-only. A Mesh representative invites us to the **dashboard**, where we:
+The client id is **public**: the browser passes it to the SDK. The client secret and the bearer token never leave the server.
 
-- create API keys (Read & Write permissions are needed for transfers)
-- add **Allowed domains**. Link refuses to render on any other origin, so `localhost:<port>` must be listed for development
-- register **one webhook URL per environment**, and store its signing secret, which is shown only once
+In the dashboard we:
+
+- create API keys (the API keys page has its own Sandbox/Production toggle)
+- register a **webhook endpoint** (HTTPS, port 443, public) and store its signing secret, which is shown once
+- subscribe the endpoint to event types by exact name (no wildcards)
 
 ---
 
-## 4. The Link Token: configuring a session
+## 4. The session: configuring a payment
 
-Every user session starts with `POST /api/v1/linktoken` from our server. The request body sets up everything the user will see. The response contains a `linkToken`.
-
-- It is **single-use** and **expires after 10 minutes**. We request a new one for every attempt.
-- It encodes the configuration, so the client can't change the destination or amount.
-
-The fields that matter for paying an invoice:
+Every payment starts with `POST /v2/sessions` from our server. For a fixed-amount payment:
 
 ```jsonc
 {
-  "userId": "buyer-7f3a…",            // stable, non-PII id for the user (max 300 chars)
-  "restrictMultipleAccounts": true,   // standard for transfer flows
+  "userId": "buyer-7f3a…",                      // stable, non-PII id for the user
   "transferOptions": {
-    "transferType": "payment",        // deposit | payment | onramp | withdrawal
-    "transactionId": "inv-0xabc…-s1", // our id; echoed back in callbacks and webhooks
-    "isInclusiveFeeEnabled": false,   // false: fees on top, the destination gets the full amount
-    "generatePayLink": false,         // true: also return a hosted URL instead of using the SDK
+    "type": "TRANSFER_TYPE_PAYMENT",
+    "clientTransactionId": "0xabc…-7f3a…",       // ours, ≤ 255 chars; echoed on webhooks
     "toAddresses": [
       {
-        "networkId": "<Mesh network UUID>",  // from GET /api/v1/transfers/managed/networks
+        "networkCaip2": "eip155:11155111",       // CAIP-2 chain id; friendly names are rejected
         "symbol": "PYUSD",
         "address": "0x<invoice clone>",
-        "amount": 9450.00                    // required for payment, in token units
+        "amount": "9450.00"                       // EXACT token amount, as a string
       }
     ]
   }
 }
 ```
 
-### Transfer types
+The response is `{ token, sessionId, expiresAt, sessionUrl }`:
 
-| Type | User experience | Amount |
-|---|---|---|
-| `deposit` | "Deposit to your account" | The user chooses (optional `minAmount`) |
-| `payment` | "Pay this merchant" | **Fixed** per destination (`amount` required) |
-| `onramp` | Buy crypto with fiat, delivered to our address | Usually `amountInFiat` |
-| `withdrawal` | Mesh-hosted payout *from* us to the user (uses `fromPairs`) | Up to `maxAmount` |
-| verify | The user signs a message to prove they own a wallet (`verifyWalletOptions`) | none |
+- `token` is a **single-use exchange code**. The SDK swaps it for a session JWT, so we hand it to the browser once, for one `openLink()` call.
+- A session lives about **1 hour**.
+- `sessionUrl` is the same code in a ready-to-open Link URL, for when the SDK can't run. We use the SDK.
 
-`toAddresses` is an array. A merchant usually lists every network/token pair it can receive, such as USDC on Ethereum, Base and Solana, so Mesh can pick whichever the user holds. We list a single entry because each invoice accepts one token on one network.
+Two ways to set the amount:
 
-Networks and tokens are identified by **Mesh UUIDs**, not chain IDs. They don't change, so they can be looked up once (`GET /api/v1/transfers/managed/networks`, `GET …/tokens`) and kept in configuration.
+| Field | Meaning |
+|---|---|
+| `toAddresses[].amount` | The exact amount of `symbol` to deliver. **What we use**: the contract needs a token amount |
+| `transferOptions.amountInFiat` `{ value, currency }` | A fixed fiat price; Mesh converts it. Not used |
+
+`toAddresses` is an array. A merchant usually lists every network/token pair it can receive, so Mesh can pick whichever the user holds. We list a single entry, because each invoice accepts one token on one network.
 
 ---
 
 ## 5. The Link SDK: the user journey
 
-The web SDK is `@meshconnect/web-link-sdk`. SDKs also exist for iOS, Android, React Native and Flutter.
+The web SDK is `@meshpayhq/link-web-sdk`, the only Mesh SDK live today.
 
 ```ts
-import { createLink } from '@meshconnect/web-link-sdk';
+import { openLink } from '@meshpayhq/link-web-sdk';
 
-const link = createLink({
-  renderType: 'overlay',        // or 'embedded' (an iframe in our container, min 500px high)
-  theme: 'system',
-  language: 'system',
-  displayFiatCurrency: 'USD',
-  onIntegrationConnected: (p) => {},  // user connected an exchange/wallet
-  onTransferFinished:     (p) => {},  // transfer submitted
-  onExit:                 (p) => {},  // Link closed, for any reason
-  onEvent:                (e) => {},  // fine-grained events (analytics, UX)
+const handle = openLink(token, clientId, {
+  environment: 'sbx',
+  target: { mode: 'modal' },    // or 'popup' (needs a user gesture) or 'iframe'
+  onExit: () => {},             // the user left, paid or not
+  onError: (error) => {},       // Link failed to start: 'popup-blocked' | 'load-error' | 'load-timeout'
 });
-
-link.openLink(linkToken);
+// handle.close() closes Link from our side
 ```
 
 Inside Link the user:
 
-1. Picks a source from Mesh's catalog: an exchange, a wallet, or **manual deposit** (a QR code or copy-paste address, offered by default if a direct connection fails).
-2. Logs in. For an exchange this includes MFA. For a wallet, they connect it.
+1. Picks a source: an exchange, a wallet, or a **manual deposit** (send to an address from anywhere).
+2. Connects it. For an exchange this includes login and MFA; for a wallet, a wallet connection.
 3. Sees a **preview** with the amount, network and fees.
 4. Approves. For an exchange, Mesh asks the exchange to withdraw to our address. For a wallet, the user signs the transaction in the wallet.
 
-### Callbacks
-
-| Callback | Fires when | Useful fields |
-|---|---|---|
-| `onIntegrationConnected` | An account is connected | `accessToken` (holds a `tokenId` for return users, §8) |
-| `onTransferFinished` | The provider **acknowledged** the transfer | `status` (pending/succeeded/failed), `transferId`, `transactionId`, `txHash`, `amount`, `symbol`, `fromAddress`, `toAddress`, `refundAddress`, `networkName` |
-| `onExit` | Link closes | `summary.page` (how far the user got), `errorMessage` |
-| `onEvent` | Steps along the way | event `type` and payload |
-
-> **`onTransferFinished` is not confirmation.** It means the exchange or wallet accepted the request, not that funds arrived. A `pending` transfer can still fail. Use callbacks only to update the UI.
+> **There is no success callback.** `onExit` fires exactly once, whether the user paid or gave up. Our frontend therefore treats `onExit` as "Link closed" and polls mesh-server for what actually happened. The server learns it from webhooks.
 
 ---
 
 ## 6. Webhooks: the source of truth
 
-Mesh POSTs JSON to our registered URL each time a transfer's status changes. This is server-to-server, so it arrives even if the user has closed the tab.
+Mesh POSTs a signed JSON event to our endpoint every time a transfer changes status. It arrives even if the user has closed the tab.
 
-### Statuses
-
-| Status | Meaning |
-|---|---|
-| `Pending` | Started, not final. It may or may not have a `TxHash` yet. **Not guaranteed**: manual deposits and sandbox may skip it |
-| `Succeeded` | Final. The funds were delivered to the destination, and `TxHash` is set |
-| `Failed` | Final. There is no `TxHash` |
-| `RefundPending` / `RefundSucceeded` | Ramp and bridging refund flows only |
-
-### Payload (single-step transfer)
+### Envelope
 
 ```json
 {
-  "Id": "358c6ab7-…",            // this delivery attempt (changes on retry)
-  "EventId": "56713e70-…",       // the event (stable across retries) → idempotency key
-  "SentTimestamp": 1720532648,
-  "UserId": "buyer-7f3a…",
-  "TransactionId": "inv-0xabc…-s1",
-  "TransferId": "dd4063e5-…",    // Mesh's id for the transfer
-  "TransferStatus": "Succeeded",
-  "TxHash": "0x7d4e…",
-  "Chain": "Ethereum",
-  "Token": "PYUSD",
-  "DestinationAddress": "0x<invoice clone>",
-  "SourceAccountProvider": "Coinbase",
-  "SourceAmount": 9450.0,
-  "DestinationAmount": 9450.0,
-  "SourceAddress": "0x…",        // who posted it on-chain (an exchange hot wallet for exchanges)
-  "RefundAddress": "0x…",        // where funds could go back to the user
-  "Timestamp": 1715175519038
+  "version": "1",
+  "event_id": "01a0871b-…",              // stable across retries → idempotency key
+  "type": "transfer.completed",
+  "occurred_at": "2026-08-07T12:00:00Z",
+  "sent_at": "2026-08-07T12:00:00Z",
+  "delivery_id": "c7d20a41-…",
+  "delivery_attempt": 1,
+  "client_id": "org-…",
+  "data": {
+    "transfer": {
+      "transfer_id": "t_01J9…",
+      "status": "completed",
+      "source":      { "kind": "wallet", "crypto": { "address": "0x…", "venue": "metamask", "network_caip2": "eip155:11155111", "asset": { "symbol": "PYUSD", "decimals": 6 }, "amount": { "value": "9450.00" }, "tx_hash": "0x…" } },
+      "destination": { "kind": "wallet", "crypto": { "address": "0x<invoice clone>", "network_caip2": "eip155:11155111", "asset": { "symbol": "PYUSD", "decimals": 6 }, "amount": { "value": "9450.00" }, "tx_hash": "0x…" } },
+      "hops": [],
+      "created_at": "…",
+      "completed_at": "…",
+      "session_id": "01a0…",
+      "client_transaction_id": "0xabc…-7f3a…"
+    },
+    "previous_status": "pending"
+  }
 }
 ```
 
-Multi-step transfers (a bridge or a swap) add a `TransferSteps` array with one entry per on-chain leg. The top-level `Chain`, `Token` and `DestinationAmount` then describe what *arrived*.
+- Field names are **snake_case**, unlike the camelCase REST API.
+- Amounts are strings. Optional fields are omitted, never sent as `""` or `0`.
+- `source.crypto.address` is absent for an exchange, since the exchange's custody sends it; `venue` names the wallet or exchange.
+- There is **no refund address**.
+
+### Types and statuses
+
+| `type` | Fires when |
+|---|---|
+| `transfer.pending` | Accepted and in flight |
+| `transfer.completed` | Terminal success: funds delivered |
+| `transfer.failed` | Terminal failure (also covers cancelled and expired) |
+| `transfer.refunded` | Terminal: funds went back to the sender |
+| `transfer.status_updated` | Catch-all: every transition. Branch on `data.transfer.status` |
+
+`data.transfer.status` is one of `pending`, `completed`, `failed`, `compliance_hold` or `refunded`. We branch on it rather than on `type`.
 
 ### Handling rules
 
-1. **Verify the signature.** Compute HMAC-SHA256 of the **raw request body** with the webhook secret, Base64-encode it, and compare it with the `X-Mesh-Signature-256` header. Never parse and re-serialize the JSON first, because that changes the bytes. Optionally also check that the sender is Mesh's IP, `20.22.113.37`.
-2. **Reply `200` within 200 ms**, then do the work in the background.
-3. **Expect duplicates.** Delivery is at-least-once, so deduplicate on `EventId`.
-4. **Match on `TransactionId`**, the id we set in the Link Token.
+1. **Verify the signature.**
+   - `X-Mesh-Signature-256` is `sha256=` followed by the **hex** HMAC-SHA256 of `"{X-Mesh-Timestamp}.{raw body}"`, using the signing secret.
+   - `X-Mesh-Timestamp` is unix seconds. Reject a delivery whose timestamp is more than 5 minutes off.
+   - Use the raw bytes, never re-serialized JSON.
+2. **Acknowledge fast** with `2xx`, then do the work in the background. Mesh's per-attempt timeout is 30 s, with 5 attempts over about 75 s.
+3. **Acknowledge and ignore** an unknown `type` or a `version` other than `"1"`.
+4. **Expect duplicates and reordering.** Delivery is at-least-once, so deduplicate on `event_id`. A non-terminal status never overwrites a terminal one.
+5. **Match on `client_transaction_id`**, the id we set in the session.
 
-### Polling as a backup
-
-`GET /api/v1/transfers/managed/mesh` lists transfers. It can be filtered by `ClientTransactionId` (our `transactionId`), `UserId`, `Statuses` and a time range. It's useful for reconciliation or for catching up on a missed webhook, but Mesh recommends webhooks over polling.
+`GET /v2/transfers?clientTransactionId=…` lists transfers for reconciliation, but webhooks are the primary path.
 
 ---
 
-## 7. Refund address and payer identity
+## 7. Payer identity
 
-Each transfer reports two addresses that look alike but differ:
+- **`source.crypto.address`** is the wallet that sent the transfer. For an exchange it's absent, because the exchange's custody sends it and many users share it.
+- **`source.crypto.venue`** names the wallet or exchange (`metamask`, `coinbase`).
 
-- **`SourceAddress`**: the address that sent the transaction on-chain. For an exchange this is the exchange's **omnibus hot wallet**, shared by many users.
-- **`RefundAddress`**: an address that reaches *this user*. For a wallet it's the wallet itself. For an exchange it's the user's own deposit address at that exchange.
-
-To send money back to a payer, use `RefundAddress`, never `SourceAddress`. This is also why our contract can't learn the payer from the inbound transfer: for an exchange payment, the sender isn't the user.
+There's no refund address in v2. This is also why our contract can't learn the payer from the inbound transfer: for an exchange payment, the sender isn't the user.
 
 ---
 
@@ -222,22 +221,21 @@ To send money back to a payer, use `RefundAddress`, never `SourceAddress`. This 
 
 | Feature | What it does |
 |---|---|
-| **Mesh Managed Tokens (MMT)** | Store the `tokenId` from `onIntegrationConnected` and pass it as `accessTokens` next time. The user skips logging in and pays in one or two taps. Mesh refreshes the tokens |
-| **Paylinks** | `generatePayLink: true` returns a hosted URL as well as the token, so Link can open in its own page with no SDK |
-| **SmartFunding** | Picks the best source asset or account automatically, and can swap or bridge so the user pays with what they hold |
-| **Headless bridging** | API-only (`/api/v1/bridging/*`): discover routes, quote, and create a one-time address that bridges any pay-in to our destination. **Mainnet only**, and enabled per client by Mesh |
-| **Onramp** | The user buys crypto with fiat through a provider (e.g. Binance Connect), delivered to our address |
-| **Wallet verification** | The user signs a message to prove they control an address |
-| **Sub-clients** | Child accounts for platforms that serve many merchants |
+| **Deposits** (`TRANSFER_TYPE_DEPOSIT`) | The user picks the amount |
+| **Wallet verification** (`verificationOptions`) | The user signs a message, or sends a test amount, to prove they control an address |
+| **Pay links** (`generatePayLink`) | A hosted payment page. Not available yet |
+| **Fiat ramps** (`/v2/ramp/*`) | Buy or sell crypto for fiat |
+| **Custom UI** | Driving the session API ourselves instead of embedding Link. Self-supported |
 
 ---
 
 ## 9. Sandbox
 
-- **Exchanges** are simulated. Coinbase and a legacy Binance integration are available. All test accounts use password `Pass123` and OTP `123456`, and the username picks the scenario: `Mesh` is a full portfolio, `Mesh2` is empty, `MeshUSDC` holds only USDC, and so on. **No real assets move**, so an exchange transfer in sandbox never reaches a testnet contract.
-- **Wallets** use real testnets: MetaMask on Sepolia and Base Sepolia, Rainbow on Sepolia, and Phantom on Solana Devnet. Sepolia stablecoins are **PYUSD** and **USDG**. These transfers are real on-chain events.
-- **Networks:** Mesh supports Tempo only on mainnet. Its sandbox has no Tempo testnet. That is why this feature targets Ethereum.
-- `Pending` webhooks may be skipped.
+- **Exchanges** are mocks (for example `mock_coinbase`). **No real assets move**, so an exchange transfer never reaches a testnet contract. Sandbox webhooks fire on the same events, with synthesized data.
+- **Wallets** use public testnets: Ethereum Sepolia (`eip155:11155111`), Base Sepolia (`eip155:84532`) and Solana Devnet. Each transfer is a real testnet transaction.
+- **Native tokens only:** the docs list each testnet with its **native token only** (Sepolia: ETH). Session creation accepts PYUSD, USDG and USDC on Sepolia, but whether Link offers an ERC-20 transfer is checked in the plan's I1.
+- **Test users:** `userId` values such as `user_test_happy_path` and `user_test_insufficient_balance` trigger fixed outcomes. The docs say to confirm the exact ids per account.
+- Mesh supports Tempo only on mainnet, which is why this feature targets Ethereum.
 
 ---
 
@@ -246,11 +244,11 @@ To send money back to a payer, use `RefundAddress`, never `SourceAddress`. This 
 | Mesh concept | InvoiceDiscount |
 |---|---|
 | `toAddresses[0].address` | The invoice clone. Each invoice has its own address, so attribution needs no memo |
-| `toAddresses[0].amount` | The quoted discounted amount (spec §4.2) |
-| `transferType: "payment"` | Pay now: a fixed amount for this invoice |
-| `transactionId` | Maps webhooks back to an invoice payment session |
-| `Succeeded` webhook | The trigger to re-check the clone's balance and call `settleDirect()` |
-| `RefundAddress` | Shown off-chain as the payer. Kept for any future refund or rescue |
-| Link Token's 10-minute expiry | Sets the minimum length of the quote window |
+| `toAddresses[0].amount` | The quoted discounted amount (spec §4.2), in token units |
+| `TRANSFER_TYPE_PAYMENT` | Pay now: a fixed amount for this invoice |
+| `clientTransactionId` | Maps webhooks back to an invoice payment session |
+| `transfer.completed` webhook | The trigger to re-check the clone's balance and call `settleDirect()` |
+| `source.crypto.venue` / `.address` | Shown off-chain as the payer |
+| Session's ~1 h life | Not the quote's life: the quote expires after 10 minutes (spec §4.2) |
 
 Mesh only gets the money into the clone. The contract still decides whether the invoice is paid, and `settleDirect()` checks the amount itself. A wrong or forged webhook can therefore at worst trigger a `settleDirect()` call that reverts.

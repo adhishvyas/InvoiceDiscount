@@ -1,6 +1,6 @@
 # InvoiceDiscount on Ethereum: Specification
 
-> Status: draft, October 2026. Not yet planned or implemented. This is a port of the Tempo implementation: the base spec ([`../../../tempo/docs/spec/invoice-discount-spec.md`](../../../tempo/docs/spec/invoice-discount-spec.md), "Tempo base") plus the `settleDirect()` contract function and its frontend actions from the MPP spec ([`../../../tempo/docs/spec/mpp-pay-now-spec.md`](../../../tempo/docs/spec/mpp-pay-now-spec.md), "Tempo MPP"). The MPP server is not ported. The Mesh Pay now spec ([`mesh-pay-now-spec.md`](mesh-pay-now-spec.md)) builds on this one.
+> Status: implemented, November 2026. Deployed on Sepolia (`contracts/deployments/sepolia.json`); test findings summarised in [`../plan/test-lane-findings.md`](../plan/test-lane-findings.md); end-to-end run in [`../e2e-checklist.md`](../e2e-checklist.md). This is a port of the Tempo implementation: the base spec ([`../../../tempo/docs/spec/invoice-discount-spec.md`](../../../tempo/docs/spec/invoice-discount-spec.md), "Tempo base") plus the `settleDirect()` contract function and its frontend actions from the MPP spec ([`../../../tempo/docs/spec/mpp-pay-now-spec.md`](../../../tempo/docs/spec/mpp-pay-now-spec.md), "Tempo MPP"). The MPP server is not ported. The Mesh Pay now spec ([`mesh-pay-now-spec.md`](mesh-pay-now-spec.md)) builds on this one.
 
 ---
 
@@ -342,7 +342,7 @@ Same suite as Tempo base §5 and Tempo MPP §6.1, run with a plain `forge test` 
 
 - **Unit tests (`test/unit/`):** a `MockERC20` in `test/` (OpenZeppelin `ERC20`, 6 decimals, public `mint`). Tests use `deal` or `mint` to fund actors.
 - **Fork tests (`test/fork/`):** run against Sepolia (`SEPOLIA_RPC_URL=… FOUNDRY_PROFILE=fork forge test`) with the real PYUSD and USDC contracts. Fund actors with `deal(token, actor, amount)`, which works on both proxies ([`verification-notes.md`](verification-notes.md) item 5).
-- **Smoke tests (`test/smoke/`):** the contract author's own minimal checks.
+- **No smoke tests:** all tests are written by the black-box test lane, so the contract author's `test/smoke/` from Tempo was dropped.
 
 Changes to the Tempo test list:
 
@@ -368,7 +368,7 @@ ethereum/
   contracts/                 # Foundry project
     src/InvoiceEscrow.sol
     src/InvoiceFactory.sol
-    test/unit/  test/fork/  test/smoke/
+    test/unit/  test/fork/  test/mocks/
     script/Deploy.s.sol      # deploys the factory (which deploys the implementation)
     deployments/sepolia.json # factory, implementation, deploy block
   frontend/                  # Vite + React + wagmi, copied from tempo/frontend
@@ -382,7 +382,7 @@ ethereum/
 - Frontend: `corepack pnpm dev | build | lint | test`, and `corepack pnpm sync-abi` after a contract change (frontend ABIs only).
 - Testnet funds: Sepolia ETH from a faucet; PYUSD and USDC from the faucets in §5.1.
 
-When this is scaffolded, add an Ethereum section to the root `CLAUDE.md` with these commands.
+These commands are also in the Ethereum section of the root `CLAUDE.md`.
 
 ---
 

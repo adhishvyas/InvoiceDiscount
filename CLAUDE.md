@@ -67,7 +67,7 @@ InvoiceDiscount is an invoice discounting smart contract project, implemented se
 
 - `stellar/` — Soroban (Rust) contract workspace, React frontend, docs
 - `tempo/` — Tempo implementation (in progress)
-- `ethereum/` — Ethereum implementation (planned; Mesh Pay now spec in `ethereum/docs/`)
+- `ethereum/` — Ethereum (Sepolia) port of the Tempo implementation, on ERC-20; Mesh Pay now is specified in `ethereum/docs/` but not built
 
 Shared at the root: `ProjectVision.txt`, `README.md`, `claude-plans/`.
 
@@ -97,3 +97,17 @@ Toolchain: Foundry (`export PATH=$HOME/.foundry/bin:$PATH`) and pnpm via corepac
   - `ALLOWED_ORIGIN` must match the frontend's origin exactly (`localhost`, not `127.0.0.1`).
 
 Network: Moderato testnet, chain 42431, RPC `https://rpc.moderato.tempo.xyz`, explorer `https://explore.testnet.tempo.xyz`. Specs, plans and the e2e checklist are in `tempo/docs/`.
+
+### Ethereum (`ethereum/`)
+
+Toolchain: as Tempo (Foundry, pnpm via corepack). After a fresh clone, fetch the contract libraries: `git submodule update --init ethereum/contracts/lib/forge-std ethereum/contracts/lib/openzeppelin-contracts`.
+
+- `ethereum/contracts/`: the Tempo contracts ported to ERC-20 (`SafeERC20`, `InvalidToken` code-size check, `invoiceRef` on the escrow events). The interface is frozen at tag `ethereum-interface-v1`; changing it needs approval and a new tag.
+  - `forge build`, `forge test` (unit tests; fork tests are excluded)
+  - Fork tests: `SEPOLIA_RPC_URL=https://ethereum-sepolia.publicnode.com FOUNDRY_PROFILE=fork forge test`
+  - Deploy (the user broadcasts): `forge script script/Deploy.s.sol --rpc-url $SEPOLIA_RPC_URL --account sepolia-deployer --broadcast --verify --verifier sourcify --gas-estimate-multiplier 800`. The multiplier is required (forge underestimates Sepolia's code-storage gas). Addresses go in `deployments/sepolia.json`.
+- `ethereum/frontend/`: React + wagmi, injected wallets (MetaMask). `.env` from `.env.example`, with `VITE_FACTORY_ADDRESS` and `VITE_FACTORY_DEPLOY_BLOCK` from `contracts/deployments/sepolia.json`. `src/lib/` is frozen at tag `ethereum-frontend-interface-v1`.
+  - `corepack pnpm dev` (http://localhost:5173), `build`, `lint`, `test`
+  - `corepack pnpm sync-abi`: regenerates `frontend/src/abi/` after a contract change
+
+Network: Sepolia, chain 11155111, explorer `https://sepolia.etherscan.io`. The RPC must accept a 10,000-block `eth_getLogs` range (`https://ethereum-sepolia.publicnode.com` does; Alchemy's free tier doesn't). Specs, plans and the e2e checklist are in `ethereum/docs/`.

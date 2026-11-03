@@ -42,16 +42,16 @@ The existing fund → trigger path stays. Whichever path settles an Active invoi
 
 ## 3. Ethereum port: differences that affect Mesh
 
-This spec doesn't cover the port itself. It assumes the Ethereum version keeps the Tempo contract's interface, including `settleDirect()`, `getInvoice()` and `activeDiscount()`. These Tempo → Ethereum differences matter for Mesh:
+The port itself is specified in [`invoice-discount-spec.md`](invoice-discount-spec.md) and implemented on Sepolia. It keeps the Tempo contract's interface, including `settleDirect()`, `getInvoice()` and `activeDiscount()`. These Tempo → Ethereum differences matter for Mesh:
 
 | Tempo | Ethereum | Effect on this spec |
 |---|---|---|
-| TIP-20 `transferWithMemo` puts `invoiceRef` on every escrow transfer | ERC-20 has no memo | The forward transfer in `settleDirect()` can't carry `invoiceRef`. Reconciliation instead uses the `SettledDirect` event (which should include `invoiceRef`), plus the `transactionId` we give Mesh (§4.3) |
+| TIP-20 `transferWithMemo` puts `invoiceRef` on every escrow transfer | ERC-20 has no memo | The forward transfer in `settleDirect()` can't carry `invoiceRef`. Reconciliation instead uses the `SettledDirect` event (which includes `invoiceRef`), plus the `transactionId` we give Mesh (§4.3) |
 | Gas paid in a stablecoin, sponsored by the app | Gas paid in ETH, no sponsorship | The settler key needs Sepolia ETH. Buyers who pay from a wallet need ETH for gas |
 | Tempo Wallet (passkeys) as the primary connector | Injected wallets (MetaMask etc.) | Only the seller needs to connect to our app. The buyer connects inside Mesh Link |
 | Any TIP-20, all with 6 decimals | Any ERC-20; decimals vary | The quote must use the token's own `decimals()`. PYUSD and USDG both use 6 |
 | TIP-20 pause/blocklist risks | PYUSD and USDG are issuer-controlled and can also pause or block addresses | Same risk as MPP spec §7, for the forward transfer |
-| `isTIP20` check at invoice creation | No equivalent registry | Out of scope here. Belongs to the port spec |
+| `isTIP20` check at invoice creation | No equivalent registry; the port checks only that the token address has code (`InvalidToken`) | None. The frontend's token list limits sellers to PYUSD, USDG and USDC |
 
 ---
 

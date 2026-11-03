@@ -348,6 +348,8 @@ Port `Home`, `CreateInvoice` and `InvoiceDetail` per spec §5.3:
 
 ### D1 — Docs
 
+> **Status:** ✅ **Completed** 2026-11-03. From a fresh clone: submodule init, `forge test` (154 pass), `corepack pnpm install`, `test` (165 pass) and `dev` (page returns 200) all work as written in `CLAUDE.md`.
+
 - Root `CLAUDE.md`: an Ethereum section with the build, test, fork, deploy and frontend commands, matching the Tempo section's format.
 - Spec status → implemented; link the findings summary.
 - Mesh spec §3: point to this port's spec instead of "This spec doesn't cover the port itself".

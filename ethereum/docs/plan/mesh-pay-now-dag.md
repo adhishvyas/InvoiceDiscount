@@ -10,7 +10,7 @@
 | Who writes tests | **All tests are written by Sonnet 5.5 sub-agents**, black-box, after the interfaces are frozen: agent A for mesh-server, agent B for the frontend. The implementers write no tests (as in the port plan) |
 | What the test agents see | Interfaces only: frozen stubs with TSDoc at an interface tag, the specs, the explainer, this plan, and the Tempo **test** files they port. Isolation from the new code is enforced by branch (the test worktree branches from a tag where the bodies are stubs). Isolation from `tempo/mpp-server/src/` (non-test files) is by instruction only, as before (user-confirmed); the agents' reports list the files they read, and the merge nodes check that list |
 | Interface tags | **`ethereum-mesh-server-interface-v1`** (new: `mesh-server/src/`) and **`ethereum-frontend-interface-v2`** (Mesh spec §3: `src/lib/` changes). A change after a tag needs the user's approval and a new tag, merged into every branch |
-| Mesh access | The user has sandbox keys, so the Mesh spike (S1) runs first and gates the code lanes (user-confirmed) |
+| Mesh access | Planned: S1 first, gating the code lanes. **Changed 2026-11-03 (user decision):** the dashboard's keys don't authenticate (S1 status below), so S2 and the code lanes proceed on the docs fallbacks in spec §6.1, and S1 runs once Mesh answers, before I1 |
 | Quote window | **900 s**: the Link Token's 10 minutes plus 5 minutes for the transfer to land and `settleDirect()` to be included (user-confirmed). A later arrival is the §7 late-arrival risk |
 | Payer details for other viewers | New endpoint **`GET /invoices/:address/mesh-sessions`** lists the invoice's sessions, so the seller also sees "Paid via Mesh" (user-confirmed; spec amendment in S2) |
 | Receipt wait | On `Succeeded`, wait **up to 180 s** (15 Sepolia blocks) for the `TxHash` receipt. Found or not, then read the clone's balance: the chain is the truth, so a balance that covers the amount due settles even if the reported hash can't be found. Spec amendment in S2 |
@@ -131,6 +131,8 @@ After the two tags, four agents work at once: V3–V5 (main session), T1 (A), F2
 
 ### S1 — Mesh spike (main session)
 
+> **Status:** ⛔ **Blocked** 2026-11-03 on authentication. The dashboard issued `mk_live_…` keys for `api.sbx.meshpay.com` and `api.meshpay.com`; every read-only call returns `401 "provide a valid Bearer token"` with `X-Client-*` headers and with the key as a Bearer token (also on the `integration-api` hosts). The user has asked their Mesh contact. Fallbacks in spec §6.1. Step 1's script is in the scratchpad (`s1/discover.mjs`); it prints responses only.
+
 Resolve the items in [What depends on the spike](#what-depends-on-the-spike-s1) with throwaway scripts in the scratchpad (not checked in), using the user's sandbox keys from a local `.env` in the scratchpad:
 
 1. `GET /api/v1/transfers/managed/networks` and `…/tokens`: Sepolia's `networkId`; the PYUSD and USDG contract addresses and symbols (items 1, 2).
@@ -143,6 +145,8 @@ Resolve the items in [What depends on the spike](#what-depends-on-the-spike-s1) 
 
 ### S2 — Spec amendments (main session, user approves)
 
+> **Status:** ✅ **Approved** 2026-11-03 on the docs fallbacks. S1's values are still to come, as a later amendment.
+
 First commit the spec revision that's in the working tree now. Then amend the Mesh spec with:
 
 - §4.1: the env var names (V1) and port 8788.
@@ -154,6 +158,8 @@ First commit the spec revision that's in the working tree now. Then amend the Me
 **Verify:** the user approves the diff to `mesh-pay-now-spec.md`.
 
 ### V1 — `ethereum/mesh-server/` scaffold (main session)
+
+> **Status:** ✅ **Completed** 2026-11-03 (`985138b`), ahead of S1: S1 changes only `.env.example` values, not names. `/health` and CORS checked with placeholder env values.
 
 Copy `tempo/mpp-server/` without `node_modules`, `.env`, `src/abi/*`, `src/pay.ts` and **every `*.test.ts` and `fakeChain.ts`** (test files belong to agent A).
 
@@ -241,6 +247,8 @@ HTTP contract (in `app.ts` TSDoc):
 `processEvent` rules (TSDoc), from Mesh spec §4.3: seen `EventId` → no-op. Unknown `TransactionId` → decode it; undecodable or not a clone → ignored (logged). `DestinationAddress` ≠ the invoice, or `Chain`/`Token` ≠ expected → `needs-attention` with the reason, no settle. `Pending` → `pending`. `Failed` → `failed`. `Succeeded` → `succeeded`, record payer details, wait ≤ `receiptTimeoutMs` for `TxHash`, then: invoice already Paid → no `settle`, `needs-attention: already Paid` (someone else settled it; the UI shows the invoice as Paid anyway); otherwise not Active → `needs-attention: <status>`; balance < `dueNow` → `needs-attention: insufficient balance <b> < <due>`; else `settle()` and wait for its receipt → `settled` with `settleTx`, or `needs-attention` with the decoded custom error name. A webhook for a lost session creates a session record (no quote: `amount` 0) so the status endpoints can show it.
 
 Commit, tag **`ethereum-mesh-server-interface-v1`**, then launch **Sonnet agent A** (brief below).
+
+> **Status:** ✅ **Completed** 2026-11-03, tag `ethereum-mesh-server-interface-v1`; typecheck passes. Differs from the sketch above: `webhook.ts` exports `createEventProcessor(ctx)`, which returns the `(event) => Promise<void>` processor, instead of `processEvent(ctx, event)`, so the dedup set and per-invoice queues live inside it; `createApp` returns that processor as `processEvent`. `tsconfig.json` has `noUnusedParameters` off for the stubs; V3 turns it back on.
 
 **Verify:** `corepack pnpm typecheck` (with `noUnusedParameters` off for the stubs if needed); every export has TSDoc; `index.ts` builds the real `settle` (`simulateContract` + `writeContract` from the settler account) and type-checks.
 

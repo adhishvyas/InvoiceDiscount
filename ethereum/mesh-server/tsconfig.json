@@ -10,7 +10,7 @@
     "verbatimModuleSyntax": true,
     "noEmit": true,
     "noUnusedLocals": true,
-    "noUnusedParameters": true
+    "noUnusedParameters": false
   },
   "include": ["src"]
 }

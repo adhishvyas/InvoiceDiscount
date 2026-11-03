@@ -333,6 +333,8 @@ Port `Home`, `CreateInvoice` and `InvoiceDetail` per spec §5.3:
 
 ### I1 — End-to-end on Sepolia (main session + user)
 
+> **Status:** ✅ **Signed off by the user** 2026-11-03 on a happy-path run (checklist: [`e2e-checklist.md`](../e2e-checklist.md)). One PYUSD invoice `0x2814a70fd45740cc23ff519e66e546804fb9201c` was created (`0x14b820e1…a3a7`), funded by a plain MetaMask account on the two-transaction path (`0x18298be8…028f`), and paid in its only tier, 10%: 9.00 to the seller (no payout address set) and 1.00 to the buyer (`0x33a9cbc4…028f`). `invoiceRef` is on `Funded` and `Paid`. **Not run on Sepolia:** cancel paths, `settleDirect` (Finish settlement and Accept and settle), a tier change, the USDC repeat, the batched fund path, and the recorded `wallet_getCapabilities` result. The unit and fork suites cover the contract side of these.
+
 `ethereum/docs/e2e-checklist.md`, ported from `tempo/docs/e2e-checklist.md`. Use tier cutoffs **minutes** apart. `.env` gets the C5 addresses.
 1. Seller creates a PYUSD invoice with a payout address. A duplicate reference is blocked.
 2. Buyer funds with a refund address, on the batched path if S1 found a wallet that supports it, and on the two-transaction path.

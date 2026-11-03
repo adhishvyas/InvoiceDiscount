@@ -3,13 +3,15 @@ import { useParams } from 'react-router-dom';
 import { erc20Abi, isAddress, zeroAddress, type Address } from 'viem';
 import { useAccount, useReadContract, useReadContracts } from 'wagmi';
 import { invoiceEscrowAbi } from '../abi/InvoiceEscrow';
-import { EXPLORER_URL } from '../config';
+import { EXPLORER_URL, MESH_SERVER_URL, MESH_TOKENS } from '../config';
 import { useFund } from '../hooks/useFund';
 import { useInvoiceHistory } from '../hooks/useInvoiceHistory';
 import { useInvoiceWrite, type WriteState } from '../hooks/useInvoiceWrite';
+import { useMeshPay, useMeshSessions } from '../hooks/useMeshPay';
 import { visibleActions } from '../lib/actions';
 import { upcomingCutoff } from '../lib/cutoff';
 import type { InvoiceHistory } from '../lib/history';
+import type { SessionView } from '../lib/meshSession';
 import { decodeRef } from '../lib/ref';
 import { computeSplit } from '../lib/split';
 import { STATUS_LABEL, Status, type StatusValue } from '../lib/status';
@@ -222,6 +224,63 @@ function CutoffWarning({ cutoff }: { cutoff: bigint | undefined }) {
   );
 }
 
+/** The Mesh session's progress after the transfer was submitted in Mesh Link (Mesh spec §5). */
+function MeshProgress({ session, onRetry }: { session: SessionView | undefined; onRetry: () => void }) {
+  switch (session?.state) {
+    case undefined:
+    case 'awaiting-transfer':
+      return <p className="text-sm text-slate-400 mt-3">Payment submitted. Waiting for Mesh to confirm the transfer…</p>;
+    case 'pending':
+      return <p className="text-sm text-slate-400 mt-3">Payment submitted. Mesh reports the transfer as pending…</p>;
+    case 'succeeded':
+      return <p className="text-sm text-slate-400 mt-3">Transfer received. Settling the invoice…</p>;
+    case 'settled':
+      return (
+        <p className="text-sm text-green-400 mt-3">
+          Paid and settled.{' '}
+          {session.settleTx && (
+            <a href={`${EXPLORER_URL}/tx/${session.settleTx}`} target="_blank" rel="noreferrer" className="underline">
+              View transaction
+            </a>
+          )}
+        </p>
+      );
+    case 'failed':
+      return (
+        <p className="text-sm text-red-400 mt-3">
+          The transfer failed.{' '}
+          <button onClick={onRetry} className="underline">
+            Try again
+          </button>
+        </p>
+      );
+    case 'needs-attention':
+      return (
+        <p className="text-sm text-amber-300 mt-3">
+          The payment needs attention: {session.reason ?? 'the invoice was not settled'}. If the funds reached the invoice, anyone
+          can use Finish settlement, or the seller can use Accept and settle for a short payment (both need a connected wallet).
+        </p>
+      );
+  }
+}
+
+/** "Paid via Mesh" from the invoice's latest session, while mesh-server still holds it. */
+function PaidViaMesh({ session }: { session: SessionView | undefined }) {
+  if (!session || !['succeeded', 'settled', 'needs-attention'].includes(session.state)) return null;
+  const { provider, refundAddress } = session.payer ?? {};
+  return (
+    <p className="text-xs text-slate-500 py-2">
+      Paid via Mesh{provider && <> from {provider}</>}
+      {refundAddress && (
+        <>
+          ; refund address <span className="font-mono break-all">{refundAddress}</span>
+        </>
+      )}
+      .
+    </p>
+  );
+}
+
 function WriteStatus({ state }: { state: WriteState }) {
   if (state.status === 'pending') {
     return (
@@ -300,6 +359,15 @@ function Invoice({ invoice }: { invoice: Address }) {
   const { state: txState, run, reset: resetTx, wrongChain } = useInvoiceWrite();
   const [confirmAccept, setConfirmAccept] = useState(false);
 
+  const meshSupported =
+    MESH_SERVER_URL !== undefined && token !== undefined && MESH_TOKENS.some((t) => t.address.toLowerCase() === token.toLowerCase());
+  const mesh = useMeshPay(() => {
+    refetch();
+    refetchBalance();
+    refetchHistory();
+  });
+  const { data: meshSessions } = useMeshSessions(invoice, meshSupported);
+
   if (error) return <main className="max-w-xl mx-auto px-6 py-16 text-red-400">Could not read this invoice: {error.message}</main>;
   if (!inv || !meta) return <main className="max-w-xl mx-auto px-6 py-16 text-slate-400">Loading…</main>;
 
@@ -319,6 +387,7 @@ function Invoice({ invoice }: { invoice: Address }) {
     now: BigInt(now),
     cloneBalance: balance,
     dueNow: split.toSeller,
+    meshSupported,
   });
   const activeTier = inv.tiers.findIndex((t) => BigInt(now) < t.cutoff);
   const nextCutoff = upcomingCutoff(inv.tiers, BigInt(now));
@@ -368,6 +437,7 @@ function Invoice({ invoice }: { invoice: Address }) {
           {history ? (
             <div className="bg-slate-900 border border-slate-800 rounded-xl px-5 py-2">
               <Timeline history={history} status={status} account={account} money={money} />
+              <PaidViaMesh session={meshSessions?.[0]} />
               {escrowRef && (
                 <p className="text-xs text-slate-500 py-2">
                   Each invoice event on-chain carries the reference <span className="font-mono">{decodeRef(escrowRef)}</span>.
@@ -419,6 +489,71 @@ function Invoice({ invoice }: { invoice: Address }) {
           <h2 className="text-sm font-semibold text-slate-400 uppercase tracking-widest mb-3">If paid now ({bpsToPercent(discount)} off)</h2>
           <p>{payoutLine}</p>
           <p className="text-slate-400">{status === Status.Funded ? refundLine : split.refund > 0n ? `${money(split.refund)} refunded to the buyer` : 'no refund'}</p>
+        </section>
+      )}
+
+      {(actions.payWithMesh || mesh.state.status !== 'idle') && (
+        <section className="bg-slate-900 border border-slate-800 rounded-xl p-5">
+          <h2 className="font-semibold mb-1">Pay with Mesh</h2>
+          {(mesh.state.status === 'idle' || mesh.state.status === 'starting') && (
+            <>
+              <p className="text-sm text-slate-400">Pay from an exchange account or wallet through Mesh. No wallet connection needed.</p>
+              <button
+                onClick={() => void mesh.start(invoice)}
+                disabled={mesh.state.status === 'starting'}
+                className="mt-3 bg-indigo-600 hover:bg-indigo-500 px-5 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
+              >
+                {mesh.state.status === 'starting' ? 'Getting a quote…' : 'Pay with Mesh'}
+              </button>
+            </>
+          )}
+          {(mesh.state.status === 'quoted' || mesh.state.status === 'linking') && (
+            <div className="mt-3 border border-indigo-800 bg-indigo-950 rounded-lg p-4 text-sm">
+              <p>
+                Pay{' '}
+                <span className="font-semibold">
+                  {mesh.state.quote.displayAmount} {mesh.state.quote.symbol}
+                </span>{' '}
+                now ({bpsToPercent(mesh.state.quote.discountBps)} discount) to invoice{' '}
+                <span className="font-mono">{decodeRef(inv.invoiceRef)}</span>. Quote valid until{' '}
+                {new Date(mesh.state.quote.expiresAt * 1000).toLocaleTimeString()}.
+              </p>
+              <div className="flex gap-3 mt-3">
+                {now < mesh.state.quote.expiresAt ? (
+                  <button
+                    onClick={() => void mesh.open()}
+                    disabled={mesh.state.status === 'linking'}
+                    className="bg-indigo-600 hover:bg-indigo-500 px-5 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
+                  >
+                    {mesh.state.status === 'linking' ? 'Mesh is open…' : 'Continue to Mesh'}
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => void mesh.start(invoice)}
+                    className="bg-indigo-600 hover:bg-indigo-500 px-5 py-2 rounded-lg text-sm font-medium transition-colors"
+                  >
+                    Quote expired; get a new one
+                  </button>
+                )}
+                <button
+                  onClick={mesh.reset}
+                  disabled={mesh.state.status === 'linking'}
+                  className="bg-slate-700 hover:bg-slate-600 px-5 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
+                >
+                  Back
+                </button>
+              </div>
+            </div>
+          )}
+          {mesh.state.status === 'submitted' && <MeshProgress session={mesh.session} onRetry={() => void mesh.start(invoice)} />}
+          {mesh.state.status === 'error' && (
+            <p className="text-sm text-red-400 mt-3">
+              {mesh.state.message}{' '}
+              <button onClick={mesh.reset} className="underline">
+                Back
+              </button>
+            </p>
+          )}
         </section>
       )}
 

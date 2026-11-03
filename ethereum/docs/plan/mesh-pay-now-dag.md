@@ -254,6 +254,8 @@ Commit, tag **`ethereum-mesh-server-interface-v1`**, then launch **Sonnet agent 
 
 ### V3 — Pure modules (main session)
 
+> **Status:** ✅ **Completed** 2026-11-03 (`bc19ffa`). Typecheck passes; no tests until M1.
+
 - `quote.ts`, `invoice.ts`: restore from `tempo/mpp-server/src/` (window 900 s); add `toMeshAmount` (`Number(formatUnits(...))`, then `parseUnits(String(n), decimals) === amount` or throw), `dueNow`, `tokenBalance`.
 - `ids.ts`, `signature.ts` (`node:crypto` `createHmac` + `timingSafeEqual`, format per S1 item 6), `sessions.ts`.
 
@@ -261,11 +263,15 @@ Commit, tag **`ethereum-mesh-server-interface-v1`**, then launch **Sonnet agent 
 
 ### V4 — Session endpoints + Mesh API client (main session)
 
+> **Status:** ✅ Code complete 2026-11-03 (`03a8f5e`); exported declarations identical to the tag (import syntax and `SessionStore`'s private fields only). Live reads on Sepolia: a non-clone → 404, the port's Paid invoice → 409 `Paid`. The `linkToken` check waits on S1 (Mesh auth).
+
 `mesh.ts` and the three `GET`/`POST` session routes, per V2. The `POST` checks in Mesh spec §4.3 order; the quote is `quoteBps` at the latest block timestamp over `QUOTE_WINDOW`; `expiresAt` = now + 600 s (the Link Token's life). `decodeRef` copied from `frontend/src/lib/ref.ts` if the response or logs need the reference.
 
 **Verify:** typecheck; with real sandbox keys, `curl -X POST localhost:8788/invoices/<active PYUSD clone>/mesh-session` returns a `linkToken` (this is also I1's first step).
 
 ### V5 — Webhook + settlement (main session, in parallel with V4)
+
+> **Status:** ✅ **Completed** 2026-11-03 (`03a8f5e`). Signed `curl` → 200, unsigned → 401, signed with a changed body → 401. Events are queued per invoice synchronously (invoice from the store or from decoding `TransactionId`), before any await, so arrival order holds; a lost session is recreated inside the queue.
 
 `webhook.ts` and the `POST /webhooks/mesh` route, per V2: raw body via `c.req.text()` before parsing; `200` then `void processEvent(...)`; dedup `Set<EventId>`; a per-invoice promise chain for serialization; `waitForTransactionReceipt({ hash, timeout })`, its timeout caught and recorded as `transferTx: not found`; revert reasons decoded as `mpp-server`'s `revertReason`.
 
@@ -286,6 +292,8 @@ Spec questions go in `ethereum/mesh-server/SPEC_QUESTIONS.md`, tests marked `// 
 **Verify:** `corepack pnpm test` against the stubs fails every test except fake-chain self-tests (justified in `SPEC_QUESTIONS.md`). `corepack pnpm typecheck` passes (lesson from port M2 finding 6: Vitest alone doesn't type-check). Committed on the test branch; report lists files read.
 
 ### F1 — Frontend lib freeze (frontend agent)
+
+> **Status:** ✅ **Completed** 2026-11-03, tag `ethereum-frontend-interface-v2` (`410a1c1`, on top of the server tag). The agent's worktree started at an old commit (`55fe394`) and it reset to the server tag before changing anything; later briefs reset explicitly. Diffed against the server tag: 4 files.
 
 - `lib/actions.ts`: `ActionContext` gains `meshSupported: boolean` (true when `MESH_SERVER_URL` is set and the token is in `MESH_TOKENS`; computed by the page so the function stays pure); `VisibleActions` gains `payWithMesh`. TSDoc rule: `meshSupported`, Active, `cloneBalance < dueNow`, and the account isn't the seller (**no account counts as not the seller**: the one flag true with no account connected). `visibleActions` body → stub.
 - New `lib/meshSession.ts`: the server's `SessionView` / `MeshSessionStart` types and `isFinalMeshState(state): boolean` (`settled`, `failed`, `needs-attention` → stop polling). Body → stub.

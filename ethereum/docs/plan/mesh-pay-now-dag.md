@@ -424,11 +424,15 @@ flowchart TD
 
 ### V6 — Server interface v2 freeze (main session)
 
+> **Status:** ✅ **Completed** 2026-11-03, tag `ethereum-mesh-server-interface-v2` (`94d2a22`, branch `ethereum-mesh-server-interface-v2-stubs` from the v1 tag, with `ethereum/docs` brought over).
+
 The v2 stubs are committed on a branch from `ethereum-mesh-server-interface-v1`, **not** from the implementation branch, so every body the test agent sees is still a stub. Changed modules: `mesh.ts` (OAuth client with token cache, `POST /v2/sessions` body and headers), `signature.ts` (timestamped hex HMAC, 300 s tolerance), `webhook.ts` (v2 envelope, status mapping), `sessions.ts` (`Payer` without `refundAddress`), `app.ts` (`networkCaip2`, `linkEnvironment`, the `201` body gains `clientId` and `linkEnvironment`, webhook headers), `quote.ts` (`toMeshAmount` removed), `env.ts`, `index.ts`. Tag `ethereum-mesh-server-interface-v2`.
 
 **Verify:** typecheck; every changed export has TSDoc; the implementation branch merges the tag with conflicts only in the stubbed files.
 
 ### T2 — Server tests updated, red against the v2 stubs (Sonnet agent A)
+
+> **Status:** ✅ **Completed** 2026-11-03 (`7db0e55`). 288 tests, 283 red against the v2 stubs; 6 new spec questions (8–13).
 
 Agent A merges the v2 tag into `ethereum-mesh-server-tests` and updates its suite: `fakeChain` helpers (`sign` with timestamp, v2 `webhookEvent`, a fake `fetch` serving both `/oauth2/token` and `/v2/sessions`), `mesh.test.ts`, `signature.test.ts` (Mesh's test vector, stale/future timestamps), `webhook.test.ts`, `app.test.ts`; `toMeshAmount` tests dropped. Same isolation rules.
 
@@ -436,19 +440,27 @@ Agent A merges the v2 tag into `ethereum-mesh-server-tests` and updates its suit
 
 ### V7 — Server v2 implementation (main session)
 
+> **Status:** ✅ **Completed** 2026-11-03 (`50012ce`). Declarations identical to the v2 tag; live: one token mint for two sandbox sessions, wrong secret → 401; Mesh's signature test vector passes. The full `POST …/mesh-session` against an Active PYUSD invoice is I1's first step.
+
 Merge the v2 tag into `ethereum-mesh-pay-now`, take the stubs in conflicted files, and implement them. Unchanged modules keep their M1-tested bodies.
 
 **Verify:** typecheck; declarations identical to the v2 tag; live: mint a token and create a session for an Active PYUSD invoice through `POST …/mesh-session`.
 
 ### M3 — Server merge + triage (main session)
 
+> **Status:** ✅ **Completed** 2026-11-03. 288/288 pass on the first run, typecheck clean, 99.1% line coverage; 0 impl bugs, 0 test bugs, 4 minor spec gaps, no change. See [findings](test-lane-findings.md#mesh-pay-now-mesh-server-v2-node-m3-of-mesh-pay-now-dagmd).
+
 As M1, logged under "Mesh pay-now: mesh-server v2" in `test-lane-findings.md`.
 
 ### F5 — Frontend lib types and SDK swap (frontend agent)
 
+> **Status:** ✅ **Completed** 2026-11-03 (`9fe08ee` tag `ethereum-frontend-interface-v3`, `ac43e1d`). SDK `@meshpayhq/link-web-sdk` 0.0.10.
+
 `lib/meshSession.ts`: `Payer` drops `refundAddress`; `MeshSessionStart` gains `clientId` and `linkEnvironment` (`'sbx' | 'prod'`). Type-only, so there are no new behaviour tests (U2 is not needed; existing tests must still compile). Tag `ethereum-frontend-interface-v3`. Then: replace `@meshconnect/web-link-sdk` with `@meshpayhq/link-web-sdk` (exact latest version, API from its `.d.ts`), `openLink` with `onExit` → poll and `onError`, still lazily loaded; "Paid via Mesh" shows provider and sender.
 
 ### M4 — Frontend merge + checks (main session)
+
+> **Status:** ✅ **Completed** 2026-11-03 (`f3624bd`). 186 tests, build and lint pass.
 
 Merge; `corepack pnpm test`, `build`, `lint`.
 

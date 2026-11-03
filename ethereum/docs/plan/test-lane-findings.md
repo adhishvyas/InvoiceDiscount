@@ -98,3 +98,37 @@ No **impl bugs** and no **test bugs**.
 - The SDK is **loaded lazily** on Continue to Mesh: importing it injects a prewarm iframe (`web.meshconnect.com/prewarm`) into every page, even with `VITE_MESH_SERVER_URL` unset. It's in its own 309 kB chunk.
 - The Pay with Mesh section stays on screen while a flow is running, even after `payWithMesh` turns false (the balance reaching the amount due would otherwise hide the progress line).
 - Once `expiresAt` passes, the confirm button becomes "Quote expired; get a new one".
+
+## Mesh pay-now: mesh-server (node M1 of [`mesh-pay-now-dag.md`](mesh-pay-now-dag.md))
+
+> 2026-11-03. Tests: Sonnet 5.5 (agent A), black-box from the Mesh spec and the frozen stubs and TSDoc at `ethereum-mesh-server-interface-v1` (`546ea29`); branch `ethereum-mesh-server-tests` (`bc1d685`, fixes `b07fc2e`). Implementation: Opus, main session, V3–V5 (`bc19ffa`, `03a8f5e`), no sight of the tests before the merge. Merges `4c65873`, `a5d26cd`.
+
+### Result
+
+| Check | First run after merge | After fixes |
+|---|---|---|
+| `corepack pnpm test` (204 tests: ~13 ported, 186 new, 5 fake-chain self-tests) | 4 failed | all pass |
+| `corepack pnpm typecheck` | passes | passes |
+| Coverage (`src/` without `index.ts`, `env.ts`, `abi/`, test files) | lines 98.9%: `app.ts` 98.1%, `webhook.ts` 98.4%, `invoice.ts` 100%, `mesh.ts` 100% (branches 80%: network-error and non-JSON paths) | |
+
+Red check on the stubs (test author): 199 of 204 failed; the 5 green ones are `fakeChain.test.ts` self-tests, which import no stubbed module. Isolation: agent A's list of files read contains only the docs, the stubs, `tempo/mpp-server/src/fakeChain.ts` and its `*.test.ts` files, and viem's `waitForTransactionReceipt` source. Its worktree, like the frontend agent's, started at an old commit (`55fe394`); it reset to the tag before writing.
+
+### Findings
+
+| # | Test | Classification | Resolution |
+|---|---|---|---|
+| 11 | `app.test.ts` › "reflects the state after a webhook"; "settles end to end … dedups a retried delivery" | **test bug** | The fixture put 90 PYUSD in the clone before `POST …/mesh-session`; at `T` the due amount is 85 (15% tier), so the route correctly answered `409 already paid` (which the suite's own test asserts). Fixed by agent A (`b07fc2e`): the balance is set after the session starts |
+| 12 | `app.test.ts` › "401 for a missing … signature"; "401 before 400" | **test bug** | The helper's default `signature = sign(body)` also applies to an explicit `undefined`, so "unsigned" requests were signed. Fixed (`b07fc2e`): `null` sends no header |
+| 13 | SPEC-QUESTION 1: zero amount due (`409` at the route vs `balance > 0` in the processor) | **spec gap** (minor) | Same edge as finding 9. Both rules are as specified; a 100%-discount invoice can't use Pay with Mesh. No change proposed |
+| 14 | SPEC-QUESTION 2: a signed JSON array is `400` | **spec gap** (wording) | TSDoc says "not a JSON object"; spec §4.3 says "isn't JSON". Proposed: spec says "isn't a JSON object" |
+| 15 | SPEC-QUESTION 3: `expiresAt` from the block timestamp, not wall-clock time | **spec gap** (wording) | Spec §4.3 step 7 says "now + 600 s" (written in S2); TSDoc says `t + 600`. Proposed: spec says "the latest block's timestamp + 600 s" |
+| 16 | SPEC-QUESTION 4: a redelivered `EventId` that ended in `needs-attention` isn't re-evaluated | **spec gap** (none needed) | By design: the route always answers `200`, so Mesh doesn't redeliver; a refused payment is finished with Finish settlement. No change |
+| 17 | SPEC-QUESTION 5: `Succeeded` after `Failed` settles | **spec gap** (none needed) | The chain decides; settling a clone that holds the funds is right. No change |
+| 18 | SPEC-QUESTIONS 6, 7: not tested (status when `toMeshAmount` throws in the route; whether an ignored event's `EventId` counts as seen) | **spec gap** (none needed) | Unreachable at 6 decimals (the route then answers Hono's `500`); the implementation marks every `EventId` seen on arrival. No change |
+
+No **impl bugs**.
+
+### Summary
+
+- Impl bugs: 0. Test bugs: 2 (4 tests). Spec gaps: 6, of which 2 are proposed wording changes (findings 14, 15).
+- Ported vs new tests: the ~13 ported quote and clone-check tests all passed first time, as expected for code copied from `mpp-server`. All 4 failures were in new HTTP-layer tests, from fixture setup and a JavaScript default-parameter trap, not from behaviour.

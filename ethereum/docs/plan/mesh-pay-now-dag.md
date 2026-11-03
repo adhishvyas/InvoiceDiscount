@@ -279,6 +279,8 @@ Commit, tag **`ethereum-mesh-server-interface-v1`**, then launch **Sonnet agent 
 
 ### T1 — Server tests, red against the stubs (Sonnet agent A)
 
+> **Status:** ✅ **Completed** 2026-11-03 (`bc1d685`, fixes `b07fc2e`). 204 tests, 199 red against the stubs (5 fake-chain self-tests); 7 spec questions.
+
 Port from `tempo/mpp-server/src/`: `fakeChain.ts` (Sepolia; extended with `eth_blockNumber`, `eth_getTransactionReceipt` from fixtures, and ERC-20 `balanceOf`/`decimals` via the existing `contracts` reads), `quote.test.ts` (window 900 s: cutoff exactly at `t + 900` counts, `t + 901` doesn't), `invoice.test.ts`. New, from Mesh spec §6.3:
 
 - `toMeshAmount` round-trip at 6 decimals (including `1`, `999_999`, odd values from `quoteAmount`), and that it throws where a JSON number can't hold the value.
@@ -345,6 +347,8 @@ Add `@meshconnect/web-link-sdk` (version pinned in S1). `hooks/useMeshPay.ts`:
 **Verify:** `corepack pnpm test` against the stubs fails every new or changed `actions`/`meshSession` test (the `config` and other existing suites stay green; justified in `frontend/SPEC_QUESTIONS.md`); `corepack pnpm build` type-checks the test files and `lint` passes. Committed on the test branch; report lists files read.
 
 ### M1 — Server merge + triage (main session; user decides spec gaps)
+
+> **Status:** ✅ **Completed** 2026-11-03 (`4c65873`, `a5d26cd`). 204/204 pass, typecheck passes, 98.9% line coverage; 0 impl bugs, 2 test bugs (fixed by agent A), 6 spec gaps (2 wording changes awaiting the user). See [`test-lane-findings.md`](test-lane-findings.md#mesh-pay-now-mesh-server-node-m1-of-mesh-pay-now-dagmd).
 
 As port M1: merge T1's branch into the server branch; `corepack pnpm test` and `typecheck`; classify each failure and each `SPEC_QUESTIONS.md` entry as **impl bug** (main session fixes `src/`), **test bug** (back to agent A via SendMessage) or **spec gap** (the user decides; spec amended). Log them in [`test-lane-findings.md`](test-lane-findings.md) under a new "Mesh pay-now: mesh-server" section. Check agent A's file list against the brief. Run `vitest --coverage`; uncovered branches in `src/` (other than `index.ts`) go back to agent A.
 

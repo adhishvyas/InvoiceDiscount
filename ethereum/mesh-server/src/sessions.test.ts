@@ -102,7 +102,7 @@ describe('sessionView', () => {
         transferTx,
         settleTx,
         reason: 'insufficient balance: 1 < 2',
-        payer: { provider: 'Coinbase', sourceAddress: '0xaa', refundAddress: '0xbb' },
+        payer: { provider: 'metamask', sourceAddress: '0xaa' },
       }),
     );
     expect(full).toMatchObject({
@@ -110,7 +110,7 @@ describe('sessionView', () => {
       transferTx,
       settleTx,
       reason: 'insufficient balance: 1 < 2',
-      payer: { provider: 'Coinbase', sourceAddress: '0xaa', refundAddress: '0xbb' },
+      payer: { provider: 'metamask', sourceAddress: '0xaa' },
     });
   });
 

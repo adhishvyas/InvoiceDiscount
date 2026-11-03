@@ -2,21 +2,24 @@ import { describe, expect, it } from 'vitest';
 import { BaseError, ContractFunctionExecutionError, ContractFunctionRevertedError, encodeErrorResult, getAddress, type Address } from 'viem';
 import { invoiceEscrowAbi } from './abi/InvoiceEscrow';
 import {
-  CHAIN_NAME,
   CLONE,
   CLONE_B,
   FACTORY,
+  NETWORK_CAIP2,
   NOT_CLONE,
   PYUSD,
   SESSION_ID,
   SESSION_ID_2,
   T,
+  USDC,
   deferred,
   fakeSettle,
   makeWorld,
   newHash,
+  txHashOf,
   txId,
   webhookEvent,
+  type EventOptions,
   type FakeSettleOptions,
   type InvoiceFixture,
 } from './fakeChain';
@@ -32,10 +35,11 @@ function setup(
   const settle = fakeSettle(world, opts.settle);
   if (opts.known !== false) {
     for (const [i, address] of Object.keys(world.invoices).entries()) {
+      const id = i === 0 ? SESSION_ID : SESSION_ID_2;
       sessions.create({
-        id: i === 0 ? SESSION_ID : SESSION_ID_2,
+        id,
         invoice: address as Address,
-        transactionId: txId(address as Address, i === 0 ? SESSION_ID : SESSION_ID_2),
+        transactionId: txId(address as Address, id),
         amount: 90_000_000n,
         discountBps: 1000,
         symbol: 'PYUSD',
@@ -48,15 +52,16 @@ function setup(
     factory: FACTORY,
     sessions,
     meshTokens: { [getAddress(PYUSD)]: 'PYUSD' },
-    chainName: CHAIN_NAME,
+    networkCaip2: NETWORK_CAIP2,
     settle,
     receiptTimeoutMs: opts.receiptTimeoutMs ?? 150,
   });
-  /** A webhook event whose inbound TxHash receipt exists on the fake chain (unless a TxHash is given). */
-  const event = (overrides: Record<string, unknown> = {}, invoice: Address = CLONE, id: string = SESSION_ID): MeshWebhookEvent => {
-    const e = webhookEvent({ TransactionId: txId(invoice, id), ...overrides }, invoice);
-    if (!('TxHash' in overrides) && e.TxHash) world.receipts[e.TxHash] = { status: 'success' };
-    return e as MeshWebhookEvent;
+  /** A webhook event whose inbound tx_hash receipt exists on the fake chain (unless `dest.tx_hash` is given). */
+  const event = (o: EventOptions = {}): MeshWebhookEvent => {
+    const e = webhookEvent(o);
+    const hash = txHashOf(e);
+    if (hash && !('tx_hash' in (o.dest ?? {}))) world.receipts[hash] = { status: 'success' };
+    return e;
   };
   const session = (id: string = SESSION_ID) => sessions.get(id)!;
   return { world, sessions, settle, process, event, session };
@@ -67,8 +72,61 @@ const waitFor = async (cond: () => boolean, ms = 1000) => {
   while (!cond() && Date.now() < end) await new Promise((r) => setTimeout(r, 5));
 };
 
-describe('createEventProcessor: settling', () => {
-  it('settles on Succeeded when the balance covers the amount due', async () => {
+describe('createEventProcessor: filtering', () => {
+  it.each([
+    ['version 2', { envelope: { version: '2' } }],
+    ['no version', { envelope: { version: undefined } }],
+    ['a numeric version', { envelope: { version: 1 } }],
+    ['a type that is not transfer.*', { type: 'payment.completed' }],
+    ['the bare type "transfer"', { type: 'transfer' }],
+    ['no type', { envelope: { type: undefined } }],
+    ['no data', { envelope: { data: undefined } }],
+    ['no data.transfer', { envelope: { data: { previous_status: 'pending' } } }],
+    ['a null data.transfer', { envelope: { data: { transfer: null } } }],
+    ['a string data.transfer', { envelope: { data: { transfer: 'completed' } } }],
+    ['no event_id', { envelope: { event_id: undefined } }],
+    ['an empty event_id', { envelope: { event_id: '' } }],
+    ['a numeric event_id', { envelope: { event_id: 7 } }],
+  ] as [string, EventOptions][])('ignores an event with %s', async (_name, o) => {
+    const t = setup();
+    await expect(t.process(t.event(o))).resolves.toBeUndefined();
+    expect(t.settle.state.calls).toHaveLength(0);
+    expect(t.session().state).toBe('awaiting-transfer');
+  });
+
+  it('does not create a session for a filtered event', async () => {
+    const t = setup({ known: false });
+    await t.process(t.event({ envelope: { version: '2' } }));
+    expect(t.sessions.forInvoice(CLONE)).toEqual([]);
+  });
+
+  it('records no EventId for a filtered event: the same event_id is processed once it is valid', async () => {
+    const t = setup();
+    const bad = t.event({ envelope: { version: '2', event_id: 'same' } });
+    await t.process(bad);
+    expect(t.session().state).toBe('awaiting-transfer');
+    await t.process(t.event({ envelope: { event_id: 'same' } }));
+    expect(t.session().state).toBe('settled');
+  });
+
+  it('accepts any transfer.* type and branches on the status, not the type', async () => {
+    for (const type of ['transfer.pending', 'transfer.failed', 'transfer.status_updated', 'transfer.something_new']) {
+      const t = setup();
+      await t.process(t.event({ type })); // status is "completed" in each
+      expect(t.session().state).toBe('settled');
+    }
+  });
+
+  it('a transfer.completed type with a pending status only marks pending', async () => {
+    const t = setup();
+    await t.process(t.event({ status: 'pending', type: 'transfer.completed' }));
+    expect(t.session().state).toBe('pending');
+    expect(t.settle.state.calls).toHaveLength(0);
+  });
+});
+
+describe('createEventProcessor: settling a completed transfer', () => {
+  it('settles when the balance covers the amount due', async () => {
     const t = setup();
     const event = t.event();
     await t.process(event);
@@ -76,71 +134,125 @@ describe('createEventProcessor: settling', () => {
     const s = t.session();
     expect(s.state).toBe('settled');
     expect(s.settleTx).toBe(t.settle.state.hashes[0]);
-    expect(s.transferTx).toBe(event.TxHash);
-    expect(s.payer).toEqual({
-      provider: 'Coinbase',
-      sourceAddress: '0x00000000000000000000000000000000000000c1',
-      refundAddress: '0x00000000000000000000000000000000000000c2',
-    });
+    expect(s.transferTx).toBe(txHashOf(event));
+    expect(s.payer).toEqual({ provider: 'metamask', sourceAddress: '0x00000000000000000000000000000000000000c1' });
     expect(s.reason).toBeUndefined();
   });
 
-  it('settles when the balance equals the amount due exactly', async () => {
-    const t = setup({ invoice: { balance: 85_000_000n } });
-    await t.process(t.event());
-    expect(t.session().state).toBe('settled');
+  it('settles when the balance equals the amount due exactly, or exceeds it', async () => {
+    const exact = setup({ invoice: { balance: 85_000_000n } });
+    await exact.process(exact.event());
+    expect(exact.session().state).toBe('settled');
+    const more = setup({ invoice: { balance: 500_000_000n } });
+    await more.process(more.event());
+    expect(more.session().state).toBe('settled');
   });
 
-  it('settles when the balance exceeds the amount due', async () => {
-    const t = setup({ invoice: { balance: 500_000_000n } });
-    await t.process(t.event());
-    expect(t.session().state).toBe('settled');
-  });
-
-  it('matches DestinationAddress case-insensitively', async () => {
+  it('matches the destination address case-insensitively', async () => {
     const t = setup();
-    await t.process(t.event({ DestinationAddress: CLONE.toUpperCase().replace('0X', '0x') }));
+    await t.process(t.event({ dest: { address: CLONE.toLowerCase() } }));
     expect(t.session().state).toBe('settled');
+    const u = setup();
+    await u.process(u.event({ dest: { address: `0x${CLONE.slice(2).toUpperCase()}` } }));
+    expect(u.session().state).toBe('settled');
   });
 
   it('settles from the chain when the inbound receipt is not found (balance decides)', async () => {
     const t = setup({ receiptTimeoutMs: 100 });
-    await t.process(t.event({ TxHash: newHash() }));
+    await t.process(t.event({ dest: { tx_hash: newHash() } }));
     expect(t.settle.state.calls).toHaveLength(1);
     expect(t.session().state).toBe('settled');
   });
 
   it('settles when the inbound receipt reverted (balance decides)', async () => {
     const t = setup();
-    const TxHash = newHash();
-    t.world.receipts[TxHash] = { status: 'reverted' };
-    await t.process(t.event({ TxHash }));
+    const tx_hash = newHash();
+    t.world.receipts[tx_hash] = { status: 'reverted' };
+    await t.process(t.event({ dest: { tx_hash } }));
     expect(t.session().state).toBe('settled');
   });
 
-  it('settles when the event has no TxHash, and records no transferTx', async () => {
+  it('settles when the destination has no tx_hash, and records no transferTx', async () => {
     const t = setup();
-    await t.process(t.event({ TxHash: undefined }));
+    await t.process(t.event({ dest: { tx_hash: undefined } }));
     expect(t.session().state).toBe('settled');
     expect(t.session().transferTx).toBeUndefined();
   });
 
   it('waits for an inbound receipt that appears late', async () => {
     const t = setup({ receiptTimeoutMs: 2000 });
-    const TxHash = newHash();
-    setTimeout(() => (t.world.receipts[TxHash] = { status: 'success' }), 40);
+    const tx_hash = newHash();
+    setTimeout(() => (t.world.receipts[tx_hash] = { status: 'success' }), 40);
     const started = Date.now();
-    await t.process(t.event({ TxHash }));
+    await t.process(t.event({ dest: { tx_hash } }));
     expect(t.session().state).toBe('settled');
     expect(Date.now() - started).toBeLessThan(1500);
   });
 
   // SPEC-QUESTION 1
-  it('settles a 100% discount invoice with a zero due amount only if the balance is positive', async () => {
-    const tiers = [{ cutoff: T + 5000n, discountBps: 10_000 }];
-    const funded = setup({ invoice: { tiers, balance: 1n } });
-    await funded.process(funded.event());
-    expect(funded.session().state).toBe('settled');
+  it('settles a 100% discount invoice with a zero due amount if the balance is positive', async () => {
+    const t = setup({ invoice: { tiers: [{ cutoff: T + 5000n, discountBps: 10_000 }], balance: 1n } });
+    await t.process(t.event());
+    expect(t.session().state).toBe('settled');
+  });
+
+  it('settles when the destination carries no network or symbol (both are checked only when present)', async () => {
+    const t = setup();
+    await t.process(t.event({ dest: { network_caip2: undefined, asset: undefined } }));
+    expect(t.session().state).toBe('settled');
+  });
+
+  it('settles when the asset has no symbol', async () => {
+    const t = setup();
+    await t.process(t.event({ dest: { asset: { decimals: 6 } } }));
+    expect(t.session().state).toBe('settled');
+  });
+
+  it('ignores a Succeeded-like event for an already settled session', async () => {
+    const t = setup();
+    await t.process(t.event());
+    const settleTx = t.session().settleTx;
+    await t.process(t.event());
+    expect(t.settle.state.calls).toHaveLength(1);
+    expect(t.session().state).toBe('settled');
+    expect(t.session().settleTx).toBe(settleTx);
+  });
+});
+
+describe('createEventProcessor: payer', () => {
+  it('takes the provider from source.crypto.venue and the address from source.crypto.address', async () => {
+    const t = setup();
+    await t.process(t.event({ src: { venue: 'coinbase', address: '0x00000000000000000000000000000000000000d9' } }));
+    expect(t.session().payer).toEqual({ provider: 'coinbase', sourceAddress: '0x00000000000000000000000000000000000000d9' });
+  });
+
+  it('falls back to source.kind for the provider when there is no venue', async () => {
+    const t = setup();
+    await t.process(t.event({ src: { venue: undefined }, srcSide: { kind: 'exchange' } }));
+    expect(t.session().payer?.provider).toBe('exchange');
+    expect(t.session().payer?.sourceAddress).toBe('0x00000000000000000000000000000000000000c1');
+  });
+
+  it('has no source address for an exchange', async () => {
+    const t = setup();
+    await t.process(t.event({ src: { venue: 'coinbase', address: undefined }, srcSide: { kind: 'exchange' } }));
+    expect(t.session().payer?.provider).toBe('coinbase');
+    expect(t.session().payer?.sourceAddress).toBeUndefined();
+  });
+
+  it('records the payer even when the destination is refused', async () => {
+    const t = setup();
+    await t.process(t.event({ dest: { address: CLONE_B } }));
+    expect(t.session().state).toBe('needs-attention');
+    expect(t.session().payer?.provider).toBe('metamask');
+    expect(t.session().transferTx).toBeDefined();
+  });
+
+  // SPEC-QUESTION 8
+  it('still settles when the webhook has no source at all', async () => {
+    const t = setup();
+    await t.process(t.event({ transfer: { source: undefined } }));
+    expect(t.session().state).toBe('settled');
   });
 });
 
@@ -152,7 +264,6 @@ describe('createEventProcessor: refusing to settle', () => {
     expect(t.session().state).toBe('needs-attention');
     expect(t.session().reason).toBe('insufficient balance: 84999999 < 85000000');
     expect(t.session().transferTx).toBeDefined();
-    expect(t.session().payer?.provider).toBe('Coinbase');
   });
 
   it('needs attention when the balance is 0 even though the amount due is 0', async () => {
@@ -171,40 +282,46 @@ describe('createEventProcessor: refusing to settle', () => {
     expect(t.session().reason).toBe('insufficient balance: 85000000 < 90000000');
   });
 
-  it('refuses a destination mismatch', async () => {
+  it('refuses a destination mismatch, or a missing destination address', async () => {
     const t = setup();
-    await t.process(t.event({ DestinationAddress: CLONE_B }));
-    expect(t.settle.state.calls).toHaveLength(0);
+    await t.process(t.event({ dest: { address: CLONE_B } }));
     expect(t.session().state).toBe('needs-attention');
     expect(t.session().reason).toBe('destination mismatch');
+    const u = setup();
+    await u.process(u.event({ dest: { address: undefined } }));
+    expect(u.session().reason).toBe('destination mismatch');
+    const v = setup();
+    await v.process(v.event({ transfer: { destination: undefined } }));
+    expect(v.session().state).toBe('needs-attention');
+    expect(v.settle.state.calls).toHaveLength(0);
+    expect(t.settle.state.calls).toHaveLength(0);
+    expect(u.settle.state.calls).toHaveLength(0);
   });
 
-  it('refuses a chain mismatch', async () => {
+  it('refuses a network mismatch when the network is present', async () => {
     const t = setup();
-    await t.process(t.event({ Chain: 'Ethereum' }));
+    await t.process(t.event({ dest: { network_caip2: 'eip155:1' } }));
     expect(t.settle.state.calls).toHaveLength(0);
     expect(t.session().state).toBe('needs-attention');
-    expect(t.session().reason).toBe('chain mismatch');
+    expect(t.session().reason).toBe('network mismatch');
   });
 
-  it('refuses a missing Chain or DestinationAddress', async () => {
+  it('refuses a token mismatch when the symbol is present', async () => {
     const t = setup();
-    await t.process(t.event({ Chain: undefined }));
-    await t.process(t.event({ DestinationAddress: undefined }));
-    expect(t.settle.state.calls).toHaveLength(0);
-    expect(t.session().state).toBe('needs-attention');
-  });
-
-  it('refuses a token mismatch', async () => {
-    const t = setup();
-    await t.process(t.event({ Token: 'USDG' }));
+    await t.process(t.event({ dest: { asset: { symbol: 'USDG', decimals: 6 } } }));
     expect(t.settle.state.calls).toHaveLength(0);
     expect(t.session().state).toBe('needs-attention');
     expect(t.session().reason).toBe('token mismatch');
   });
 
-  it('refuses when the invoice token is not a Mesh token at all', async () => {
-    const t = setup({ invoice: { token: '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238' } });
+  it('refuses a symbol of another case', async () => {
+    const t = setup();
+    await t.process(t.event({ dest: { asset: { symbol: 'pyusd' } } }));
+    expect(t.session().reason).toBe('token mismatch');
+  });
+
+  it('refuses a present symbol when the invoice token is not a Mesh token at all', async () => {
+    const t = setup({ invoice: { token: USDC } });
     await t.process(t.event());
     expect(t.settle.state.calls).toHaveLength(0);
     expect(t.session().reason).toBe('token mismatch');
@@ -229,30 +346,22 @@ describe('createEventProcessor: refusing to settle', () => {
     expect(t.session().reason).toBe(reason);
   });
 
-  it('can settle on a later event once the balance has arrived', async () => {
+  it('can settle on a later event once the balance has arrived, clearing the reason', async () => {
     const t = setup({ invoice: { balance: 10n } });
     await t.process(t.event());
     expect(t.session().state).toBe('needs-attention');
+    expect(t.session().reason).toBeDefined();
     t.world.invoice(CLONE).balance = 90_000_000n;
     await t.process(t.event());
     expect(t.session().state).toBe('settled');
+    expect(t.session().reason).toBeUndefined();
     expect(t.settle.state.calls).toHaveLength(1);
-  });
-
-  it('ignores a Succeeded event for an already settled session', async () => {
-    const t = setup();
-    await t.process(t.event());
-    const settleTx = t.session().settleTx;
-    await t.process(t.event());
-    expect(t.settle.state.calls).toHaveLength(1);
-    expect(t.session().state).toBe('settled');
-    expect(t.session().settleTx).toBe(settleTx);
   });
 
   // SPEC-QUESTION 5
-  it('settles on Succeeded after a Failed event', async () => {
+  it('settles a completed event after a failed one', async () => {
     const t = setup();
-    await t.process(t.event({ TransferStatus: 'Failed', TxHash: null }));
+    await t.process(t.event({ status: 'failed' }));
     expect(t.session().state).toBe('failed');
     await t.process(t.event());
     expect(t.session().state).toBe('settled');
@@ -303,7 +412,7 @@ describe('createEventProcessor: settle outcomes', () => {
     expect(t.session().reason).toBeTruthy();
   });
 
-  it('does not mark succeeded sessions settled before settle returns', async () => {
+  it('shows succeeded while settle is in flight, then settled', async () => {
     const gate = deferred();
     const t = setup({ settle: { gate: gate.promise } });
     const done = t.process(t.event());
@@ -315,74 +424,88 @@ describe('createEventProcessor: settle outcomes', () => {
   });
 });
 
-describe('createEventProcessor: other statuses', () => {
-  it('Pending moves awaiting-transfer to pending', async () => {
+describe('createEventProcessor: non-terminal and failed statuses', () => {
+  it.each(['pending', 'compliance_hold'])('%s moves awaiting-transfer to pending without settling', async (status) => {
     const t = setup();
-    await t.process(t.event({ TransferStatus: 'Pending', TxHash: null }));
+    await t.process(t.event({ status }));
     expect(t.session().state).toBe('pending');
     expect(t.settle.state.calls).toHaveLength(0);
   });
 
-  it('Failed moves awaiting-transfer and pending to failed', async () => {
+  it.each(['failed', 'refunded'])('%s moves awaiting-transfer and pending to failed, with the status as the reason', async (status) => {
     const a = setup();
-    await a.process(a.event({ TransferStatus: 'Failed', TxHash: null }));
+    await a.process(a.event({ status }));
     expect(a.session().state).toBe('failed');
+    expect(a.session().reason).toBe(status);
     const b = setup();
-    await b.process(b.event({ TransferStatus: 'Pending', TxHash: null }));
-    await b.process(b.event({ TransferStatus: 'Failed', TxHash: null }));
+    await b.process(b.event({ status: 'pending' }));
+    await b.process(b.event({ status }));
     expect(b.session().state).toBe('failed');
     expect(b.settle.state.calls).toHaveLength(0);
   });
 
-  it('Pending and Failed leave other states as they are', async () => {
+  it('prefers error_code, then error_message, then the status, for a failure reason', async () => {
+    const both = setup();
+    await both.process(both.event({ status: 'failed', transfer: { error_code: 'insufficient_funds', error_message: 'Not enough funds' } }));
+    expect(both.session().reason).toBe('insufficient_funds');
+    const message = setup();
+    await message.process(message.event({ status: 'refunded', transfer: { error_message: 'Sent back' } }));
+    expect(message.session().reason).toBe('Sent back');
+    const neither = setup();
+    await neither.process(neither.event({ status: 'failed' }));
+    expect(neither.session().reason).toBe('failed');
+  });
+
+  it('compliance_hold after pending stays pending, and after a terminal state changes nothing', async () => {
+    const t = setup();
+    await t.process(t.event({ status: 'pending' }));
+    await t.process(t.event({ status: 'compliance_hold' }));
+    expect(t.session().state).toBe('pending');
+    await t.process(t.event({ status: 'failed' }));
+    await t.process(t.event({ status: 'compliance_hold' }));
+    expect(t.session().state).toBe('failed');
+  });
+
+  it('a non-terminal or failed status never overwrites settled or needs-attention', async () => {
     const t = setup();
     await t.process(t.event());
+    for (const status of ['pending', 'compliance_hold', 'failed', 'refunded']) await t.process(t.event({ status }));
     expect(t.session().state).toBe('settled');
-    await t.process(t.event({ TransferStatus: 'Pending', TxHash: null }));
-    expect(t.session().state).toBe('settled');
-    await t.process(t.event({ TransferStatus: 'Failed', TxHash: null }));
-    expect(t.session().state).toBe('settled');
+    expect(t.session().reason).toBeUndefined();
 
     const n = setup({ invoice: { balance: 1n } });
     await n.process(n.event());
+    const reason = n.session().reason;
     expect(n.session().state).toBe('needs-attention');
-    await n.process(n.event({ TransferStatus: 'Failed', TxHash: null }));
+    for (const status of ['pending', 'compliance_hold', 'failed', 'refunded']) await n.process(n.event({ status }));
     expect(n.session().state).toBe('needs-attention');
-    await n.process(n.event({ TransferStatus: 'Pending', TxHash: null }));
-    expect(n.session().state).toBe('needs-attention');
+    expect(n.session().reason).toBe(reason);
   });
 
-  it('Pending then Succeeded reaches settled, even sent back to back', async () => {
+  it('pending then completed reaches settled, even sent back to back', async () => {
     const t = setup();
-    const a = t.process(t.event({ TransferStatus: 'Pending', TxHash: null }));
+    const a = t.process(t.event({ status: 'pending' }));
     const b = t.process(t.event());
     await Promise.all([a, b]);
     expect(t.session().state).toBe('settled');
     expect(t.settle.state.calls).toHaveLength(1);
   });
 
-  it('Succeeded alone reaches settled', async () => {
+  it('ignores any other status', async () => {
     const t = setup();
-    await t.process(t.event());
-    expect(t.session().state).toBe('settled');
-  });
-
-  it('ignores any other TransferStatus', async () => {
-    const t = setup();
-    for (const TransferStatus of ['RefundPending', 'RefundSucceeded', 'succeeded', '', 'Unknown']) {
-      await t.process(t.event({ TransferStatus, TxHash: null }));
-    }
+    for (const status of ['', 'unknown', 'COMPLETED', 'Completed', 'succeeded', 'cancelled']) await t.process(t.event({ status }));
+    await t.process(t.event({ transfer: { status: undefined } }));
     expect(t.session().state).toBe('awaiting-transfer');
     expect(t.settle.state.calls).toHaveLength(0);
   });
 });
 
 describe('createEventProcessor: deduplication', () => {
-  it('handles an EventId once: settle is called once for two deliveries', async () => {
+  it('handles an event_id once: settle is called once for two deliveries', async () => {
     const t = setup();
     const event = t.event();
     await t.process(event);
-    await t.process({ ...event });
+    await t.process(JSON.parse(JSON.stringify(event)));
     expect(t.settle.state.calls).toHaveLength(1);
   });
 
@@ -391,7 +514,7 @@ describe('createEventProcessor: deduplication', () => {
     const t = setup({ settle: { gate: gate.promise } });
     const event = t.event();
     const first = t.process(event);
-    const second = t.process({ ...event });
+    const second = t.process(JSON.parse(JSON.stringify(event)));
     await waitFor(() => t.settle.state.calls.length >= 1);
     await new Promise((r) => setTimeout(r, 30));
     gate.resolve();
@@ -400,32 +523,39 @@ describe('createEventProcessor: deduplication', () => {
   });
 
   // SPEC-QUESTION 4
-  it('dedups a refused event too: a retry does not re-evaluate', async () => {
+  it('dedups a refused event too: a redelivery does not re-evaluate', async () => {
     const t = setup({ invoice: { balance: 1n } });
     const event = t.event();
     await t.process(event);
     expect(t.session().state).toBe('needs-attention');
     t.world.invoice(CLONE).balance = 90_000_000n;
-    await t.process({ ...event });
+    await t.process(JSON.parse(JSON.stringify(event)));
     expect(t.session().state).toBe('needs-attention');
     expect(t.settle.state.calls).toHaveLength(0);
   });
 
-  it('treats different EventIds as different events', async () => {
+  it('counts an event ignored for its session as seen', async () => {
+    const t = setup({ known: false });
+    await t.process(t.event({ envelope: { event_id: 'dup' }, transfer: { client_transaction_id: 'garbage' } }));
+    await t.process(t.event({ envelope: { event_id: 'dup' } })); // same event_id, now with a valid transaction id
+    expect(t.sessions.forInvoice(CLONE)).toEqual([]);
+    expect(t.settle.state.calls).toHaveLength(0);
+  });
+
+  it('treats different event_ids as different events', async () => {
     const t = setup({ invoice: { balance: 1n } });
-    await t.process(t.event({ EventId: 'a' }));
+    await t.process(t.event({ envelope: { event_id: 'a' } }));
     t.world.invoice(CLONE).balance = 90_000_000n;
-    await t.process(t.event({ EventId: 'b' }));
+    await t.process(t.event({ envelope: { event_id: 'b' } }));
     expect(t.session().state).toBe('settled');
   });
 });
 
 describe('createEventProcessor: unknown sessions', () => {
-  it('creates a session for a decodable TransactionId of a clone, and settles from the chain', async () => {
+  it('creates a session for a decodable client_transaction_id of a clone, and settles from the chain', async () => {
     const t = setup({ known: false });
     expect(t.sessions.byTransactionId(txId(CLONE))).toBeUndefined();
-    const event = t.event();
-    await t.process(event);
+    await t.process(t.event());
     const s = t.sessions.byTransactionId(txId(CLONE));
     expect(s).toBeDefined();
     expect(s!.id).toBe(SESSION_ID);
@@ -439,16 +569,16 @@ describe('createEventProcessor: unknown sessions', () => {
     expect(t.sessions.forInvoice(CLONE)).toHaveLength(1);
   });
 
-  it('decodes an upper-case TransactionId', async () => {
+  it('decodes an upper-case client_transaction_id', async () => {
     const t = setup({ known: false });
-    await t.process(t.event({ TransactionId: `0x${CLONE.slice(2).toUpperCase()}-${SESSION_ID.toUpperCase()}` }));
+    await t.process(t.event({ transfer: { client_transaction_id: `0x${CLONE.slice(2).toUpperCase()}-${SESSION_ID.toUpperCase()}` } }));
     expect(t.sessions.forInvoice(CLONE)).toHaveLength(1);
     expect(t.sessions.forInvoice(CLONE)[0].state).toBe('settled');
   });
 
-  it('creates a session with an empty symbol when Token is absent', async () => {
+  it('creates a session with an empty symbol when the destination has no asset symbol', async () => {
     const t = setup({ known: false });
-    await t.process(t.event({ Token: undefined, TransferStatus: 'Pending', TxHash: null }));
+    await t.process(t.event({ status: 'pending', dest: { asset: undefined } }));
     const s = t.sessions.forInvoice(CLONE)[0];
     expect(s.symbol).toBe('');
     expect(s.state).toBe('pending');
@@ -456,50 +586,53 @@ describe('createEventProcessor: unknown sessions', () => {
 
   it('refuses an unknown session whose event does not match, but still records it', async () => {
     const t = setup({ known: false });
-    await t.process(t.event({ Chain: 'Base' }));
+    await t.process(t.event({ dest: { network_caip2: 'eip155:8453' } }));
     expect(t.settle.state.calls).toHaveLength(0);
     expect(t.sessions.forInvoice(CLONE)[0].state).toBe('needs-attention');
   });
 
-  it('ignores a decodable TransactionId whose invoice is not a clone', async () => {
+  it('ignores a decodable client_transaction_id whose invoice is not a clone', async () => {
     const t = setup({ known: false });
-    await t.process(t.event({ TransactionId: txId(NOT_CLONE), DestinationAddress: NOT_CLONE }));
+    await t.process(t.event({ invoice: NOT_CLONE }));
     expect(t.settle.state.calls).toHaveLength(0);
     expect(t.sessions.forInvoice(NOT_CLONE)).toEqual([]);
     expect(t.sessions.byTransactionId(txId(NOT_CLONE))).toBeUndefined();
   });
 
-  it('ignores a decodable TransactionId of an address with no code', async () => {
+  it('ignores a decodable client_transaction_id of an address with no code', async () => {
     const t = setup({ known: false });
     const nowhere: Address = '0x00000000000000000000000000000000000000cc';
-    await t.process(t.event({ TransactionId: txId(nowhere), DestinationAddress: nowhere }));
+    await t.process(t.event({ invoice: nowhere }));
     expect(t.settle.state.calls).toHaveLength(0);
     expect(t.sessions.forInvoice(nowhere)).toEqual([]);
   });
 
-  it.each(['', 'garbage', `${CLONE}`, `${CLONE}-123`, `${CLONE}-0123456789abcdeg`, `${CLONE}-${SESSION_ID}-x`])(
-    'ignores an undecodable TransactionId %j',
-    async (TransactionId) => {
+  it.each(['', 'garbage', `${CLONE}`, `${CLONE}-123`, `${CLONE}-0123456789abcdeg`, `${CLONE}-${SESSION_ID}-x`, undefined, 5, null])(
+    'ignores an undecodable or missing client_transaction_id %j',
+    async (client_transaction_id) => {
       const t = setup({ known: false });
-      await expect(t.process(t.event({ TransactionId }))).resolves.toBeUndefined();
+      await expect(t.process(t.event({ transfer: { client_transaction_id } }))).resolves.toBeUndefined();
       expect(t.settle.state.calls).toHaveLength(0);
       expect(t.sessions.forInvoice(CLONE)).toEqual([]);
     },
   );
 
-  it('never rejects on an event with missing fields', async () => {
+  it('never rejects on odd events', async () => {
     const t = setup();
-    for (const e of [{}, { EventId: 'x' }, { EventId: 'y', TransactionId: 5 }, { EventId: 'z', TransactionId: txId(CLONE) }]) {
-      await expect(t.process(e as unknown as MeshWebhookEvent)).resolves.toBeUndefined();
-    }
+    const odd = [
+      {},
+      { version: '1' },
+      { version: '1', type: 'transfer.completed', event_id: 'x', data: { transfer: {} } },
+      { version: '1', type: 'transfer.completed', event_id: 'y', data: { transfer: { status: 'completed', client_transaction_id: txId(CLONE) } } },
+      { version: '1', type: 'transfer.completed', event_id: 'z', data: { transfer: { status: 'completed', client_transaction_id: txId(CLONE), destination: 'x', source: 5 } } },
+    ];
+    for (const e of odd) await expect(t.process(e as unknown as MeshWebhookEvent)).resolves.toBeUndefined();
     expect(t.settle.state.calls).toHaveLength(0);
   });
 });
 
 describe('createEventProcessor: serialization', () => {
-  it('never calls settle concurrently for one invoice, and handles events in arrival order', async () => {
-    const t = setup({ settle: { delayMs: 40 } });
-    // A second session on the same invoice.
+  const second = (t: ReturnType<typeof setup>) =>
     t.sessions.create({
       id: SESSION_ID_2,
       invoice: CLONE,
@@ -509,9 +642,13 @@ describe('createEventProcessor: serialization', () => {
       symbol: 'PYUSD',
       expiresAt: T + 600n,
     });
+
+  it('never calls settle concurrently for one invoice, and handles events in arrival order', async () => {
+    const t = setup({ settle: { delayMs: 40 } });
+    second(t);
     const a = t.process(t.event());
-    const b = t.process(t.event({}, CLONE, SESSION_ID_2));
-    const c = t.process(t.event({ TransferStatus: 'Pending', TxHash: null }, CLONE, SESSION_ID_2));
+    const b = t.process(t.event({ sessionId: SESSION_ID_2 }));
+    const c = t.process(t.event({ status: 'pending', sessionId: SESSION_ID_2 }));
     await Promise.all([a, b, c]);
     expect(t.settle.state.calls).toHaveLength(2);
     expect(t.settle.state.maxActive).toBe(1);
@@ -522,17 +659,9 @@ describe('createEventProcessor: serialization', () => {
   it('does not start the second settle until the first has finished', async () => {
     const gate = deferred();
     const t = setup({ settle: { gate: gate.promise } });
-    t.sessions.create({
-      id: SESSION_ID_2,
-      invoice: CLONE,
-      transactionId: txId(CLONE, SESSION_ID_2),
-      amount: 90_000_000n,
-      discountBps: 1000,
-      symbol: 'PYUSD',
-      expiresAt: T + 600n,
-    });
+    second(t);
     const a = t.process(t.event());
-    const b = t.process(t.event({}, CLONE, SESSION_ID_2));
+    const b = t.process(t.event({ sessionId: SESSION_ID_2 }));
     await waitFor(() => t.settle.state.calls.length >= 1);
     await new Promise((r) => setTimeout(r, 60));
     expect(t.settle.state.calls).toHaveLength(1);
@@ -548,8 +677,8 @@ describe('createEventProcessor: serialization', () => {
       invoices: { [CLONE]: { balance: 90_000_000n }, [CLONE_B]: { balance: 90_000_000n } },
       settle: { gate: gate.promise },
     });
-    const a = t.process(t.event({}, CLONE, SESSION_ID));
-    const b = t.process(t.event({}, CLONE_B, SESSION_ID_2));
+    const a = t.process(t.event({ invoice: CLONE, sessionId: SESSION_ID }));
+    const b = t.process(t.event({ invoice: CLONE_B, sessionId: SESSION_ID_2 }));
     await waitFor(() => t.settle.state.calls.length === 2, 800);
     const concurrent = t.settle.state.calls.length;
     gate.resolve();
@@ -562,8 +691,7 @@ describe('createEventProcessor: serialization', () => {
     const t = setup({ settle: { reject: new Error('first fails') } });
     await t.process(t.event());
     expect(t.session().state).toBe('needs-attention');
-    const next = t.event();
-    await t.process(next);
+    await t.process(t.event());
     expect(t.settle.state.calls).toHaveLength(2);
   });
 });

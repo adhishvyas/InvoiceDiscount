@@ -17,6 +17,7 @@ import {
 import { sepolia } from 'viem/chains';
 import { invoiceEscrowAbi } from './abi/InvoiceEscrow';
 import { invoiceFactoryAbi } from './abi/InvoiceFactory';
+import type { MeshTransfer, MeshWebhookEvent } from './webhook';
 
 export interface FakeContract {
   abi: Abi;
@@ -146,8 +147,10 @@ export const USDC: Address = '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238';
 export const SELLER: Address = '0x00000000000000000000000000000000000000a1';
 export const ZERO: Address = '0x0000000000000000000000000000000000000000';
 export const WEBHOOK_SECRET = 'whsec_test_secret';
-export const NETWORK_ID = '11111111-2222-3333-4444-555555555555';
-export const CHAIN_NAME = 'Sepolia';
+export const NETWORK_CAIP2 = 'eip155:11155111';
+export const MESH_BASE_URL = 'https://api.sbx.meshpay.com';
+export const MESH_CLIENT_ID = 'client-id-1';
+export const MESH_CLIENT_SECRET = 'client-secret-1';
 
 export const DEFAULT_TIERS = [
   { cutoff: T + 100n, discountBps: 1500 }, // ends inside the 900 s window, so the quote uses the next tier (1000)
@@ -294,32 +297,99 @@ export function deferred() {
   return { promise, resolve };
 }
 
-/** Base64 HMAC-SHA256 of the raw body, as Mesh signs webhooks. */
-export const sign = (body: string, secret: string = WEBHOOK_SECRET) =>
-  createHmac('sha256', secret).update(body, 'utf8').digest('base64');
+/** Mesh's webhook signature header: `sha256=` + hex HMAC-SHA256 of `${timestamp}.${body}`. */
+export const sign = (body: string, timestamp: number | string, secret: string = WEBHOOK_SECRET) =>
+  `sha256=${createHmac('sha256', secret).update(`${timestamp}.${body}`, 'utf8').digest('hex')}`;
+
+export const nowSeconds = () => Math.floor(Date.now() / 1000);
 
 export const SESSION_ID = '0123456789abcdef';
 export const SESSION_ID_2 = 'fedcba9876543210';
 /** `<invoice lowercase>-<id>`, built without `encodeTransactionId`. */
 export const txId = (invoice: Address, id: string = SESSION_ID) => `${invoice.toLowerCase()}-${id}`;
 
+export type BuiltEvent = MeshWebhookEvent & { data: { transfer: MeshTransfer } };
+
+export interface EventOptions {
+  /** `data.transfer.status`. Default `completed`. */
+  status?: string;
+  /** Envelope `type`. Default follows the status (`transfer.completed`, ...). */
+  type?: string;
+  invoice?: Address;
+  sessionId?: string;
+  /** Fields merged over `destination.crypto`; an `undefined` value removes the field. */
+  dest?: Record<string, unknown>;
+  /** Fields merged over `source.crypto`; an `undefined` value removes the field. */
+  src?: Record<string, unknown>;
+  /** Fields merged over `source` itself (e.g. `kind`). */
+  srcSide?: Record<string, unknown>;
+  /** Fields merged over `data.transfer`; an `undefined` value removes the field. */
+  transfer?: Record<string, unknown>;
+  /** Fields merged over the envelope; an `undefined` value removes the field. */
+  envelope?: Record<string, unknown>;
+}
+
 let eventCounter = 0;
-/** A `Succeeded` webhook body for `invoice` that matches the fixtures; override anything. */
-export function webhookEvent(overrides: Record<string, unknown> = {}, invoice: Address = CLONE) {
-  return {
-    Id: `delivery-${++eventCounter}`,
-    EventId: `event-${eventCounter}`,
-    TransactionId: txId(invoice),
-    TransferStatus: 'Succeeded',
-    TxHash: newHash(),
-    Chain: CHAIN_NAME,
-    Token: 'PYUSD',
-    DestinationAddress: getAddress(invoice),
-    SourceAccountProvider: 'Coinbase',
-    SourceAddress: '0x00000000000000000000000000000000000000c1',
-    RefundAddress: '0x00000000000000000000000000000000000000c2',
-    ...overrides,
+const TYPE_OF_STATUS: Record<string, string> = {
+  pending: 'transfer.pending',
+  completed: 'transfer.completed',
+  failed: 'transfer.failed',
+  refunded: 'transfer.refunded',
+};
+
+/** The inbound transfer's `tx_hash` of a built event. */
+export const txHashOf = (e: MeshWebhookEvent) => e.data?.transfer?.destination?.crypto?.tx_hash as Hash;
+
+/** A v2 `transfer.*` webhook for `invoice` that matches the fixtures (a completed MetaMask PYUSD payment). */
+export function webhookEvent(o: EventOptions = {}): BuiltEvent {
+  const invoice = o.invoice ?? CLONE;
+  const status = o.status ?? 'completed';
+  const n = ++eventCounter;
+  const hash = newHash();
+  const transfer = {
+    transfer_id: `t_${n}`,
+    status,
+    source: {
+      kind: 'wallet',
+      crypto: {
+        address: '0x00000000000000000000000000000000000000c1',
+        venue: 'metamask',
+        network_caip2: NETWORK_CAIP2,
+        asset: { symbol: 'PYUSD', decimals: 6 },
+        amount: { value: '90.00' },
+        tx_hash: hash,
+        ...o.src,
+      },
+      ...o.srcSide,
+    },
+    destination: {
+      kind: 'wallet',
+      crypto: {
+        address: getAddress(invoice),
+        network_caip2: NETWORK_CAIP2,
+        asset: { symbol: 'PYUSD', decimals: 6 },
+        amount: { value: '90.00' },
+        tx_hash: hash,
+        ...o.dest,
+      },
+    },
+    hops: [],
+    session_id: 'sess_1',
+    client_transaction_id: txId(invoice, o.sessionId ?? SESSION_ID),
+    ...o.transfer,
   };
+  return {
+    version: '1',
+    event_id: `event-${n}`,
+    type: o.type ?? TYPE_OF_STATUS[status] ?? 'transfer.status_updated',
+    occurred_at: '2026-11-03T12:00:00Z',
+    sent_at: '2026-11-03T12:00:00Z',
+    delivery_id: `delivery-${n}`,
+    delivery_attempt: 1,
+    client_id: 'org-1',
+    data: { transfer, previous_status: 'pending' },
+    ...o.envelope,
+  } as BuiltEvent;
 }
 
 export interface FetchCall {
@@ -329,21 +399,50 @@ export interface FetchCall {
   body: string | undefined;
 }
 
-export const linkTokenResponse = (linkToken = 'lt_test_token') =>
-  new Response(JSON.stringify({ content: { linkToken } }), { status: 200, headers: { 'content-type': 'application/json' } });
+export const json = (body: unknown, status = 200) =>
+  new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
-/** A fake `fetch` answering every call with `respond(call)` and recording the calls. */
-export function fakeFetch(respond: (call: FetchCall) => Response | Promise<Response> = () => linkTokenResponse()) {
+export interface FakeMeshOptions {
+  /** Answer for `POST /oauth2/token`. Default: `200 { access_token: "at_<n>", token_type: "Bearer", expires_in: 1799 }`. */
+  onToken?: (call: FetchCall, n: number) => Response | Promise<Response>;
+  /** Answer for `POST /v2/sessions`. Default: `200 { token: "lt_test_token", sessionId, expiresAt, sessionUrl }`. */
+  onSession?: (call: FetchCall, n: number) => Response | Promise<Response>;
+}
+
+/** A fake `fetch` for Mesh's two endpoints. `calls` has everything in order; `mints` and `sessions` split them. */
+export function fakeMesh(opts: FakeMeshOptions = {}) {
   const calls: FetchCall[] = [];
+  const mints: FetchCall[] = [];
+  const sessions: FetchCall[] = [];
   const fn = (async (input: string | URL | Request, init?: RequestInit) => {
     const call: FetchCall = {
       url: typeof input === 'string' ? input : input instanceof URL ? input.href : input.url,
       method: init?.method,
       headers: new Headers(init?.headers),
-      body: typeof init?.body === 'string' ? init.body : undefined,
+      body: typeof init?.body === 'string' ? init.body : init?.body instanceof URLSearchParams ? init.body.toString() : undefined,
     };
     calls.push(call);
-    return respond(call);
+    const path = new URL(call.url).pathname;
+    if (path === '/oauth2/token') {
+      mints.push(call);
+      return (
+        opts.onToken?.(call, mints.length) ??
+        json({ access_token: `at_${mints.length}`, token_type: 'Bearer', expires_in: 1799, scope: 'sessions:edit' })
+      );
+    }
+    if (path === '/v2/sessions') {
+      sessions.push(call);
+      return (
+        opts.onSession?.(call, sessions.length) ??
+        json({
+          token: 'lt_test_token',
+          sessionId: `sess_${sessions.length}`,
+          expiresAt: '2026-11-03T13:00:00Z',
+          sessionUrl: 'https://link.sbx.meshpay.com/?token=lt_test_token',
+        })
+      );
+    }
+    return new Response('not found', { status: 404 });
   }) as typeof fetch;
-  return Object.assign(fn, { calls });
+  return Object.assign(fn, { calls, mints, sessions });
 }

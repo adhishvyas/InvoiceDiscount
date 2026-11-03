@@ -1,21 +1,23 @@
-// INTERFACE FREEZE (tag ethereum-mesh-server-interface-v1): exported names, signatures and documented behaviour.
+// INTERFACE FREEZE (tag ethereum-mesh-server-interface-v2): exported names, signatures and documented behaviour.
 import type { Address, Hash } from 'viem';
 
 /**
  * - `awaiting-transfer`: created, no webhook yet.
- * - `pending`: a `Pending` webhook arrived (not guaranteed in sandbox; nothing depends on it).
- * - `succeeded`: a `Succeeded` webhook arrived and is being processed.
+ * - `pending`: a `pending` or `compliance_hold` status arrived (nothing depends on it).
+ * - `succeeded`: a `completed` status arrived and is being processed.
  * - `settled`: `settleDirect()` from this server succeeded (`settleTx` set).
- * - `failed`: a `Failed` webhook arrived; the buyer can start again.
+ * - `failed`: a `failed` or `refunded` status arrived (`reason` says which); the buyer can start again.
  * - `needs-attention`: funds may have arrived but nothing was settled; `reason` says why.
  */
 export type SessionState = 'awaiting-transfer' | 'pending' | 'succeeded' | 'settled' | 'failed' | 'needs-attention';
 
-/** Who paid, from the `Succeeded` webhook (`SourceAccountProvider`, `SourceAddress`, `RefundAddress`). */
+/**
+ * Who paid, from the `completed` webhook: `provider` is `source.crypto.venue` (e.g. `metamask`, `coinbase`), else
+ * `source.kind`; `sourceAddress` is `source.crypto.address` (absent for an exchange). v2 has no refund address.
+ */
 export interface Payer {
   provider?: string;
   sourceAddress?: string;
-  refundAddress?: string;
 }
 
 export interface Session {
@@ -30,7 +32,7 @@ export interface Session {
   /** Unix seconds; 0n when recreated from a webhook. */
   expiresAt: bigint;
   state: SessionState;
-  /** The webhook's `TxHash` (the inbound transfer). */
+  /** The destination leg's `tx_hash` from the webhook (the inbound transfer). */
   transferTx?: Hash;
   settleTx?: Hash;
   reason?: string;

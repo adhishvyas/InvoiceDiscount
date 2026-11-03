@@ -68,3 +68,67 @@ Red check on the stubs (test author): 150 of 165 failed. The 15 green ones are `
 | Spec gap | 3 | 2 |
 
 Every impl bug was found by a new test, not a ported one; both were latent in the Tempo code.
+
+## Mesh pay-now: frontend (node M2 of [`mesh-pay-now-dag.md`](mesh-pay-now-dag.md))
+
+> 2026-11-03. Tests: Sonnet 5.5 (agent B), black-box from Mesh spec §5 and the frozen `src/lib/actions.ts`, `src/lib/meshSession.ts` and `src/config.ts` at `ethereum-frontend-interface-v2` (`410a1c1`); branch `ethereum-frontend-mesh-tests` (`5fe6433`). Implementation: Opus frontend agent, F2–F4 on `ethereum-frontend-mesh` (`2fb9e27`, `636b3c7`, `08fff4d`), no sight of the tests. Merges `49f515c` (frontend), `98d8c49` (tests).
+
+### Result
+
+| Check | First run after merge |
+|---|---|
+| `corepack pnpm test` (186 tests: 51 new or changed by agent B, 135 existing) | all pass |
+| `corepack pnpm build` (`tsc -b` type-checks test files too) | passes |
+| `corepack pnpm lint` | passes |
+
+Red check on the stubs (test author): 51 of 51 new or changed `actions` and `meshSession` tests failed; the 2 new `config` tests passed, since `config.ts` is data written in full at the tag (as in port M2). Before the merge, the implementation branch's `tsc -b` failed only on 3 errors in the old `actions.test.ts` (missing `meshSupported`/`payWithMesh`), which agent B's branch fixes. Isolation: agent B's list of files read stays inside its brief (no other `src/lib` bodies, pages, hooks, `mesh-server/src`, `tempo/frontend/src` or `actions.ts` history).
+
+### Findings
+
+| # | Test | Classification | Resolution |
+|---|---|---|---|
+| 9 | SPEC-QUESTION 5: `payWithMesh` when `dueNow == 0` (a 100% discount tier) | **spec gap** (minor) | Tests and implementation both read `cloneBalance < dueNow` literally (false). Consistent with mesh-server's `409 already paid` (balance ≥ due) and with Mesh needing a non-zero amount. No spec change proposed |
+| 10 | SPEC-QUESTION 6: "unset" `VITE_MESH_SERVER_URL` tested as an empty string | **spec gap** (minor) | Same as the existing config tests; `|| undefined` makes them equal. No spec change proposed |
+
+No **impl bugs** and no **test bugs**.
+
+### Implementation notes (frontend agent, beyond the plan's wording)
+
+- `@meshconnect/web-link-sdk` **3.15.0**, pinned without S1 (Mesh auth is blocked): `createLink(options)` then `link.openLink(linkToken)`; callbacks `onTransferFinished(payload)` and `onExit(error?, summary?)`, from the package's `.d.ts`. pnpm warns about an unmet `bs58@^6` peer in its Solana dependencies.
+- The SDK is **loaded lazily** on Continue to Mesh: importing it injects a prewarm iframe (`web.meshconnect.com/prewarm`) into every page, even with `VITE_MESH_SERVER_URL` unset. It's in its own 309 kB chunk.
+- The Pay with Mesh section stays on screen while a flow is running, even after `payWithMesh` turns false (the balance reaching the amount due would otherwise hide the progress line).
+- Once `expiresAt` passes, the confirm button becomes "Quote expired; get a new one".
+
+## Mesh pay-now: mesh-server (node M1 of [`mesh-pay-now-dag.md`](mesh-pay-now-dag.md))
+
+> 2026-11-03. Tests: Sonnet 5.5 (agent A), black-box from the Mesh spec and the frozen stubs and TSDoc at `ethereum-mesh-server-interface-v1` (`546ea29`); branch `ethereum-mesh-server-tests` (`bc1d685`, fixes `b07fc2e`). Implementation: Opus, main session, V3–V5 (`bc19ffa`, `03a8f5e`), no sight of the tests before the merge. Merges `4c65873`, `a5d26cd`.
+
+### Result
+
+| Check | First run after merge | After fixes |
+|---|---|---|
+| `corepack pnpm test` (204 tests: ~13 ported, 186 new, 5 fake-chain self-tests) | 4 failed | all pass |
+| `corepack pnpm typecheck` | passes | passes |
+| Coverage (`src/` without `index.ts`, `env.ts`, `abi/`, test files) | lines 98.9%: `app.ts` 98.1%, `webhook.ts` 98.4%, `invoice.ts` 100%, `mesh.ts` 100% (branches 80%: network-error and non-JSON paths) | |
+
+Red check on the stubs (test author): 199 of 204 failed; the 5 green ones are `fakeChain.test.ts` self-tests, which import no stubbed module. Isolation: agent A's list of files read contains only the docs, the stubs, `tempo/mpp-server/src/fakeChain.ts` and its `*.test.ts` files, and viem's `waitForTransactionReceipt` source. Its worktree, like the frontend agent's, started at an old commit (`55fe394`); it reset to the tag before writing.
+
+### Findings
+
+| # | Test | Classification | Resolution |
+|---|---|---|---|
+| 11 | `app.test.ts` › "reflects the state after a webhook"; "settles end to end … dedups a retried delivery" | **test bug** | The fixture put 90 PYUSD in the clone before `POST …/mesh-session`; at `T` the due amount is 85 (15% tier), so the route correctly answered `409 already paid` (which the suite's own test asserts). Fixed by agent A (`b07fc2e`): the balance is set after the session starts |
+| 12 | `app.test.ts` › "401 for a missing … signature"; "401 before 400" | **test bug** | The helper's default `signature = sign(body)` also applies to an explicit `undefined`, so "unsigned" requests were signed. Fixed (`b07fc2e`): `null` sends no header |
+| 13 | SPEC-QUESTION 1: zero amount due (`409` at the route vs `balance > 0` in the processor) | **spec gap** (minor) | Same edge as finding 9. Both rules are as specified; a 100%-discount invoice can't use Pay with Mesh. No change proposed |
+| 14 | SPEC-QUESTION 2: a signed JSON array is `400` | **spec gap** (wording) | TSDoc says "not a JSON object"; spec §4.3 says "isn't JSON". Proposed: spec says "isn't a JSON object" |
+| 15 | SPEC-QUESTION 3: `expiresAt` from the block timestamp, not wall-clock time | **spec gap** (wording) | Spec §4.3 step 7 says "now + 600 s" (written in S2); TSDoc says `t + 600`. Proposed: spec says "the latest block's timestamp + 600 s" |
+| 16 | SPEC-QUESTION 4: a redelivered `EventId` that ended in `needs-attention` isn't re-evaluated | **spec gap** (none needed) | By design: the route always answers `200`, so Mesh doesn't redeliver; a refused payment is finished with Finish settlement. No change |
+| 17 | SPEC-QUESTION 5: `Succeeded` after `Failed` settles | **spec gap** (none needed) | The chain decides; settling a clone that holds the funds is right. No change |
+| 18 | SPEC-QUESTIONS 6, 7: not tested (status when `toMeshAmount` throws in the route; whether an ignored event's `EventId` counts as seen) | **spec gap** (none needed) | Unreachable at 6 decimals (the route then answers Hono's `500`); the implementation marks every `EventId` seen on arrival. No change |
+
+No **impl bugs**.
+
+### Summary
+
+- Impl bugs: 0. Test bugs: 2 (4 tests). Spec gaps: 6, of which 2 are proposed wording changes (findings 14, 15).
+- Ported vs new tests: the ~13 ported quote and clone-check tests all passed first time, as expected for code copied from `mpp-server`. All 4 failures were in new HTTP-layer tests, from fixture setup and a JavaScript default-parameter trap, not from behaviour.

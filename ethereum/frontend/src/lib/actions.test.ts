@@ -19,10 +19,11 @@ const ctx = (patch: Partial<ActionContext>): ActionContext => ({
   now: DUE - 1n,
   cloneBalance: 0n,
   dueNow: DUE_NOW,
+  meshSupported: false,
   ...patch,
 });
 
-const NONE: VisibleActions = { fund: false, trigger: false, cancel: false, finishSettlement: false, acceptAndSettle: false };
+const NONE: VisibleActions = { fund: false, trigger: false, cancel: false, finishSettlement: false, acceptAndSettle: false, payWithMesh: false };
 /** Only the lifecycle actions, for the cases that predate direct settlement. */
 const lifecycle = ({ fund, trigger, cancel }: VisibleActions) => ({ fund, trigger, cancel });
 
@@ -154,6 +155,7 @@ describe('visibleActions', () => {
         cancel: (active || funded) && (isSeller || (isBuyer && now > DUE)),
         finishSettlement: active && cloneBalance > 0n && cloneBalance >= DUE_NOW,
         acceptAndSettle: active && isSeller && cloneBalance > 0n && cloneBalance < DUE_NOW,
+        payWithMesh: false, // meshSupported is false in this matrix
       };
     };
 
@@ -184,5 +186,102 @@ describe('visibleActions', () => {
         });
       }
     }
+  });
+  describe('Pay with Mesh', () => {
+    const mesh = (patch: Partial<ActionContext>) => visibleActions(ctx({ meshSupported: true, account: STRANGER, ...patch })).payWithMesh;
+    const FLAGS = ['fund', 'trigger', 'cancel', 'finishSettlement', 'acceptAndSettle'] as const;
+
+    it('is offered to a connected non-seller on an unpaid Active invoice', () => {
+      expect(mesh({})).toBe(true);
+    });
+    it('is offered with no wallet connected (no account counts as not the seller)', () => {
+      expect(mesh({ account: undefined })).toBe(true);
+    });
+    it('is not offered to the seller, compared case-insensitively', () => {
+      expect(mesh({ account: SELLER })).toBe(false);
+      expect(mesh({ account: SELLER.toUpperCase().replace('0X', '0x') })).toBe(false);
+      expect(mesh({ account: SELLER, seller: SELLER.toUpperCase().replace('0X', '0x') })).toBe(false);
+    });
+    it('is offered to the future buyer address and to a different-case non-seller', () => {
+      expect(mesh({ account: BUYER, buyer: BUYER })).toBe(true);
+      expect(mesh({ account: STRANGER.toUpperCase().replace('0X', '0x') })).toBe(true);
+    });
+    it('is offered only while Active', () => {
+      for (const account of [undefined, STRANGER, BUYER, SELLER]) {
+        for (const status of [Status.Funded, Status.Paid, Status.Cancelled]) {
+          expect(mesh({ account, status, buyer: BUYER }), `status=${status}`).toBe(false);
+        }
+      }
+    });
+    it('is offered only while the balance is below the amount due now', () => {
+      expect(mesh({ cloneBalance: 0n })).toBe(true);
+      expect(mesh({ cloneBalance: 1n })).toBe(true);
+      expect(mesh({ cloneBalance: DUE_NOW - 1n })).toBe(true);
+      expect(mesh({ cloneBalance: DUE_NOW })).toBe(false);
+      expect(mesh({ cloneBalance: DUE_NOW + 1n })).toBe(false);
+      expect(mesh({ cloneBalance: 10n * DUE_NOW })).toBe(false);
+    });
+    it('is not offered when the amount due is zero (nothing is below it), even with no balance', () => {
+      // SPEC-QUESTION 5
+      expect(mesh({ dueNow: 0n, cloneBalance: 0n })).toBe(false);
+      expect(mesh({ dueNow: 0n, cloneBalance: 1n })).toBe(false);
+    });
+    it('uses the current amount due, not a fixed one', () => {
+      expect(mesh({ dueNow: 500n, cloneBalance: 499n })).toBe(true);
+      expect(mesh({ dueNow: 500n, cloneBalance: 500n })).toBe(false);
+      expect(mesh({ dueNow: 5_000n, cloneBalance: DUE_NOW })).toBe(true);
+    });
+    it('is never offered when meshSupported is false (USDC invoice or no mesh-server)', () => {
+      for (const account of [undefined, STRANGER, BUYER, SELLER]) {
+        for (const cloneBalance of [0n, DUE_NOW - 1n]) {
+          expect(mesh({ account, cloneBalance, meshSupported: false })).toBe(false);
+        }
+      }
+    });
+    it('does not depend on the due date', () => {
+      for (const now of [DUE - 100n, DUE, DUE + 1n, DUE + 100n]) expect(mesh({ now })).toBe(true);
+    });
+
+    it('with no account, every other flag stays false (only payWithMesh may be true)', () => {
+      for (const meshSupported of [true, false]) {
+        for (const status of [Status.Active, Status.Funded, Status.Paid, Status.Cancelled]) {
+          for (const cloneBalance of [0n, 1n, DUE_NOW - 1n, DUE_NOW, DUE_NOW + 1n]) {
+            const a = visibleActions(
+              ctx({ account: undefined, meshSupported, status, buyer: status === Status.Active ? ZERO : BUYER, cloneBalance, now: DUE + 1n }),
+            );
+            for (const f of FLAGS) expect(a[f], `${f} status=${status} balance=${cloneBalance}`).toBe(false);
+            expect(a.payWithMesh).toBe(meshSupported && status === Status.Active && cloneBalance < DUE_NOW);
+          }
+        }
+      }
+    });
+
+    it('leaves the existing flags unaffected by meshSupported, across the whole matrix', () => {
+      const accounts = [undefined, SELLER, BUYER, STRANGER];
+      for (const account of accounts) {
+        for (const status of [Status.Active, Status.Funded, Status.Paid, Status.Cancelled]) {
+          for (const now of [DUE - 1n, DUE, DUE + 1n]) {
+            for (const cloneBalance of [0n, 1n, DUE_NOW - 1n, DUE_NOW, DUE_NOW + 1n]) {
+              const base = { account, status, now, cloneBalance, buyer: status === Status.Active ? ZERO : BUYER };
+              const on = visibleActions(ctx({ ...base, meshSupported: true }));
+              const off = visibleActions(ctx({ ...base, meshSupported: false }));
+              for (const f of FLAGS) expect(on[f], `${f} ${JSON.stringify({ ...base, now: String(now), cloneBalance: String(cloneBalance) })}`).toBe(off[f]);
+              expect(off.payWithMesh).toBe(false);
+            }
+          }
+        }
+      }
+    });
+
+    it('matches an independent oracle across role x status x balance with meshSupported on', () => {
+      for (const account of [undefined, SELLER, BUYER, STRANGER]) {
+        for (const status of [Status.Active, Status.Funded, Status.Paid, Status.Cancelled]) {
+          for (const cloneBalance of [0n, 1n, DUE_NOW - 1n, DUE_NOW, DUE_NOW + 1n]) {
+            const actual = visibleActions(ctx({ account, status, cloneBalance, meshSupported: true, buyer: status === Status.Active ? ZERO : BUYER })).payWithMesh;
+            expect(actual).toBe(status === Status.Active && cloneBalance < DUE_NOW && account !== SELLER);
+          }
+        }
+      }
+    });
   });
 });

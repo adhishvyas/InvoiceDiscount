@@ -2,7 +2,7 @@ import { isAddress } from 'viem';
 import { sepolia } from 'viem/chains';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as configModule from './config';
-import { DEFAULT_TOKEN, ETH_FAUCET_URL, EXPLORER_URL, TOKENS, config } from './config';
+import { DEFAULT_TOKEN, ETH_FAUCET_URL, EXPLORER_URL, MESH_TOKENS, TOKENS, config } from './config';
 
 describe('config', () => {
   it('targets Sepolia only', () => {
@@ -37,6 +37,13 @@ describe('config', () => {
   it('has an ETH faucet link', () => {
     expect(ETH_FAUCET_URL).toMatch(/^https:\/\//);
   });
+  it('offers Pay with Mesh for PYUSD and USDG only, a subset of TOKENS with the same addresses', () => {
+    expect(MESH_TOKENS.map((t) => t.symbol).sort()).toEqual(['PYUSD', 'USDG']);
+    for (const m of MESH_TOKENS) expect(TOKENS).toContainEqual({ symbol: m.symbol, address: m.address });
+    expect(MESH_TOKENS.map((t) => t.symbol)).not.toContain('USDC');
+    const usdc = TOKENS.find((t) => t.symbol === 'USDC')!;
+    expect(MESH_TOKENS.map((t) => t.address.toLowerCase())).not.toContain(usdc.address.toLowerCase());
+  });
   it('exports nothing Tempo- or MPP-related', () => {
     for (const name of Object.keys(configModule)) expect(name).not.toMatch(/tempo|mpp|feePayer|wallet_?id/i);
   });
@@ -56,6 +63,15 @@ describe('config from the environment', () => {
     expect(fresh.RPC_URL).toBeUndefined();
     expect(fresh.FACTORY_ADDRESS).toBeUndefined();
     expect(fresh.FACTORY_DEPLOY_BLOCK).toBeUndefined();
+  });
+  it('leaves MESH_SERVER_URL undefined when unset, and reads it when set', async () => {
+    // SPEC-QUESTION 6
+    vi.stubEnv('VITE_MESH_SERVER_URL', '');
+    vi.resetModules();
+    expect((await import('./config')).MESH_SERVER_URL).toBeUndefined();
+    vi.stubEnv('VITE_MESH_SERVER_URL', 'http://localhost:8788');
+    vi.resetModules();
+    expect((await import('./config')).MESH_SERVER_URL).toBe('http://localhost:8788');
   });
   it('reads the factory address, deploy block (as a bigint) and RPC URL', async () => {
     vi.stubEnv('VITE_RPC_URL', 'https://rpc.example');

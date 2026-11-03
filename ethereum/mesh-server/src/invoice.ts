@@ -1,4 +1,4 @@
-// INTERFACE FREEZE (tag ethereum-mesh-server-interface-v1): exported names, signatures and documented behaviour.
+// INTERFACE FREEZE (tag ethereum-mesh-server-interface-v2): exported names, signatures and documented behaviour.
 import { concat, erc20Abi, getAddress, type Address, type Client, type ContractFunctionReturnType, type Hex } from 'viem';
 import { getBlock, getCode, readContract } from 'viem/actions';
 import { invoiceEscrowAbi } from './abi/InvoiceEscrow';

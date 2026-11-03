@@ -1,4 +1,4 @@
-// INTERFACE FREEZE (tag ethereum-mesh-server-interface-v1): exported names, signatures and documented behaviour.
+// INTERFACE FREEZE (tag ethereum-mesh-server-interface-v2): exported names, signatures and documented behaviour.
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { erc20Abi, formatUnits, getAddress, isAddress, type Address, type Client, type Hash } from 'viem';
@@ -6,27 +6,31 @@ import { getBlock, readContract } from 'viem/actions';
 import { invoiceEscrowAbi } from './abi/InvoiceEscrow';
 import { encodeTransactionId, newSessionId } from './ids';
 import { isClone, readInvoice, Status, STATUS_NAME, tokenBalance } from './invoice';
-import { MeshApiError, requestLinkToken, type MeshApiConfig } from './mesh';
-import { quoteAmount, quoteBps, QUOTE_WINDOW, toMeshAmount } from './quote';
+import { createMeshClient, MeshApiError, type MeshApiConfig, type MeshSession } from './mesh';
+import { quoteAmount, quoteBps, QUOTE_WINDOW } from './quote';
 import { SessionStore, sessionView } from './sessions';
 import { verifyMeshSignature } from './signature';
 import { createEventProcessor, type MeshWebhookEvent } from './webhook';
 
-/** The Link Token's life (Mesh docs: 10 minutes). */
-const LINK_TOKEN_LIFE = 600n;
+/** The quote's life (Mesh spec §4.3 step 7); the Mesh session itself lives about an hour. */
+const QUOTE_LIFE = 600n;
+
+/** The Link SDK `environment` the frontend passes to `openLink()`. */
+export type LinkEnvironment = 'sbx' | 'prod';
 
 export interface AppConfig {
   /** CORS origin, matched exactly. */
   allowedOrigin: string;
   client: Client;
   factory: Address;
+  /** `createApp` builds one `createMeshClient(meshApi)` (one token cache) for the app. */
   meshApi: MeshApiConfig;
+  /** Returned to the frontend with each session. */
+  linkEnvironment: LinkEnvironment;
   /** Mesh-supported token address (checksummed) → Mesh's symbol. */
   meshTokens: Record<Address, string>;
-  /** Mesh's `networkId` for Sepolia. */
-  networkId: string;
-  /** The `Chain` string a Sepolia webhook carries. */
-  chainName: string;
+  /** The target network's CAIP-2 id, e.g. `eip155:11155111`. */
+  networkCaip2: string;
   webhookSecret: string;
   /** See `WebhookContext.settle`. */
   settle: (invoice: Address) => Promise<Hash>;
@@ -52,13 +56,14 @@ export interface AppConfig {
  *    `409 { error: "already paid", balance, due }` (decimal strings).
  * 5. Quote: `discountBps = quoteBps(t, tier cutoffs, activeDiscount, QUOTE_WINDOW)`, `amount = quoteAmount(principal, discountBps)`.
  *    `decimals()` is read from the token; `displayAmount = formatUnits(amount, decimals)`.
- * 6. `requestLinkToken` with `invoice` = the checksummed clone, `symbol` = `meshTokens[token]`, `amount` =
- *    `toMeshAmount(amount, decimals)`, `networkId`, `transactionId = encodeTransactionId(invoice, id)` and
- *    `userId = "buyer-" + id`, for a fresh `id = newSessionId()`. A `MeshApiError` → `502 { error, status? }`;
- *    no session is recorded.
- * 7. Record the session (`awaiting-transfer`, `expiresAt = t + 600`) →
- *    `201 { id, linkToken, amount, displayAmount, symbol, discountBps, expiresAt }` (`amount` a decimal string in base
- *    units, `expiresAt` unix seconds as a number).
+ * 6. For a fresh `id = newSessionId()`: `createPaymentSession` with `invoice` = the checksummed clone, `symbol` =
+ *    `meshTokens[token]`, `amount` = `displayAmount`, `networkCaip2`, `clientTransactionId = encodeTransactionId(invoice, id)`,
+ *    `userId = "buyer-" + id` and `idempotencyKey = "mesh-session-" + id`. A `MeshApiError` (from the token mint or
+ *    the session call) → `502 { error, status?, code? }`; no session is recorded.
+ * 7. Record the session (`awaiting-transfer`, `transactionId` = the `clientTransactionId`, `expiresAt = t + 600`) →
+ *    `201 { id, linkToken, clientId, linkEnvironment, amount, displayAmount, symbol, discountBps, expiresAt }`:
+ *    `linkToken` is Mesh's session `token`, `clientId` is `meshApi.clientId`, `amount` a decimal string in base
+ *    units, `expiresAt` unix seconds as a number.
  *
  * `GET /invoices/:address/mesh-session/:id` → `200 SessionView`. `400` for an invalid address; `404` for an unknown id
  * or a session of another invoice (addresses compare case-insensitively).
@@ -66,9 +71,10 @@ export interface AppConfig {
  * `GET /invoices/:address/mesh-sessions` → `200 { sessions: SessionView[] }`, most recent first; `[]` when there are
  * none. `400` for an invalid address. No chain reads.
  *
- * `POST /webhooks/mesh`: the raw body is checked with `verifyMeshSignature` against the `X-Mesh-Signature-256`
- * header before parsing. Missing or bad → `401`. Valid but not a JSON object → `400`. Otherwise `200 { ok: true }`
- * is returned **without awaiting** the processor, which is then run on the parsed event.
+ * `POST /webhooks/mesh`: the raw body, `X-Mesh-Timestamp` and `X-Mesh-Signature-256` are checked with
+ * `verifyMeshSignature` (current time) before parsing. Missing or bad → `401`. Valid but not a JSON object (arrays
+ * included) → `400`. Otherwise `200 { ok: true }` is returned **without awaiting** the processor, which is then run
+ * on the parsed event (so ignored versions and types are also `200`).
  */
 export function createApp(config: AppConfig): {
   app: Hono;
@@ -77,6 +83,7 @@ export function createApp(config: AppConfig): {
 } {
   const { client } = config;
   const sessions = config.sessions ?? new SessionStore();
+  const mesh = createMeshClient(config.meshApi);
   const processEvent = createEventProcessor({ ...config, sessions });
   const app = new Hono();
   app.use('*', cors({ origin: config.allowedOrigin }));
@@ -107,27 +114,39 @@ export function createApp(config: AppConfig): {
 
     const discountBps = await quoteBps(t, invoice.tiers.map((tier) => tier.cutoff), discountAt, QUOTE_WINDOW);
     const amount = quoteAmount(invoice.principal, discountBps);
+    const displayAmount = formatUnits(amount, decimals);
     const id = newSessionId();
     const transactionId = encodeTransactionId(address, id);
-    let linkToken: string;
+    let meshSession: MeshSession;
     try {
-      linkToken = await requestLinkToken(config.meshApi, {
+      meshSession = await mesh.createPaymentSession({
         invoice: address,
         symbol,
-        amount: toMeshAmount(amount, decimals),
-        networkId: config.networkId,
-        transactionId,
+        amount: displayAmount,
+        networkCaip2: config.networkCaip2,
+        clientTransactionId: transactionId,
         userId: `buyer-${id}`,
+        idempotencyKey: `mesh-session-${id}`,
       });
     } catch (error) {
-      if (error instanceof MeshApiError) return c.json({ error: error.message, status: error.status }, 502);
+      if (error instanceof MeshApiError) return c.json({ error: error.message, status: error.status, code: error.code }, 502);
       throw error;
     }
 
-    const expiresAt = t + LINK_TOKEN_LIFE;
+    const expiresAt = t + QUOTE_LIFE;
     sessions.create({ id, invoice: address, transactionId, amount, discountBps, symbol, expiresAt });
     return c.json(
-      { id, linkToken, amount: amount.toString(), displayAmount: formatUnits(amount, decimals), symbol, discountBps, expiresAt: Number(expiresAt) },
+      {
+        id,
+        linkToken: meshSession.token,
+        clientId: config.meshApi.clientId,
+        linkEnvironment: config.linkEnvironment,
+        amount: amount.toString(),
+        displayAmount,
+        symbol,
+        discountBps,
+        expiresAt: Number(expiresAt),
+      },
       201,
     );
   });
@@ -148,7 +167,8 @@ export function createApp(config: AppConfig): {
 
   app.post('/webhooks/mesh', async (c) => {
     const raw = await c.req.text();
-    if (!verifyMeshSignature(raw, c.req.header('X-Mesh-Signature-256'), config.webhookSecret)) return c.json({ error: 'bad signature' }, 401);
+    const valid = verifyMeshSignature(raw, c.req.header('X-Mesh-Timestamp'), c.req.header('X-Mesh-Signature-256'), config.webhookSecret);
+    if (!valid) return c.json({ error: 'bad signature' }, 401);
     let event: unknown;
     try {
       event = JSON.parse(raw);

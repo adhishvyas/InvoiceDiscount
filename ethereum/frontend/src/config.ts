@@ -46,3 +46,12 @@ export const FACTORY_ADDRESS = (import.meta.env.VITE_FACTORY_ADDRESS || undefine
 export const FACTORY_DEPLOY_BLOCK = import.meta.env.VITE_FACTORY_DEPLOY_BLOCK
   ? BigInt(import.meta.env.VITE_FACTORY_DEPLOY_BLOCK)
   : undefined;
+
+/** `VITE_MESH_SERVER_URL`, mesh-server's origin; undefined when unset, which hides Pay with Mesh. */
+export const MESH_SERVER_URL = (import.meta.env.VITE_MESH_SERVER_URL || undefined) as string | undefined;
+
+/** The tokens Pay with Mesh is offered for (Mesh spec §6.1): PYUSD and USDG, same addresses as in `TOKENS`. */
+export const MESH_TOKENS: readonly TokenInfo[] = [
+  { symbol: 'PYUSD', address: '0xCaC524BcA292aaade2DF8A05cC58F0a65B1B3bB9' },
+  { symbol: 'USDG', address: '0xfBb2A78CceEb415b00300925e464C3E44E6e06b0' },
+];

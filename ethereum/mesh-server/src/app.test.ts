@@ -54,11 +54,11 @@ function setup(
   const post = (address: string) => built.app.request(`/invoices/${address}/mesh-session`, { method: 'POST' });
   const get = (address: string, id: string) => built.app.request(`/invoices/${address}/mesh-session/${id}`);
   const list = (address: string) => built.app.request(`/invoices/${address}/mesh-sessions`);
-  const webhook = (body: string, signature: string | undefined = sign(body)) =>
+  const webhook = (body: string, signature: string | null = sign(body)) =>
     built.app.request('/webhooks/mesh', {
       method: 'POST',
       body,
-      headers: { 'content-type': 'application/json', ...(signature === undefined ? {} : { 'X-Mesh-Signature-256': signature }) },
+      headers: { 'content-type': 'application/json', ...(signature === null ? {} : { 'X-Mesh-Signature-256': signature }) },
     });
   return { world, fetch, settle, ...built, post, get, list, webhook };
 }
@@ -310,8 +310,9 @@ describe('GET /invoices/:address/mesh-session/:id', () => {
   });
 
   it('reflects the state after a webhook', async () => {
-    const t = setup({ invoice: { balance: 90_000_000n } });
+    const t = setup();
     const { id } = (await (await t.post(CLONE)).json()) as { id: string };
+    t.world.invoice(CLONE).balance = 90_000_000n; // the transfer lands
     const event = webhookEvent({ TransactionId: txId(CLONE, id) });
     t.world.receipts[event.TxHash] = { status: 'success' };
     await t.processEvent(event);
@@ -381,7 +382,7 @@ describe('POST /webhooks/mesh', () => {
   it('is 401 for a missing, empty, wrong or malformed signature', async () => {
     const t = setup();
     const raw = body();
-    expect((await t.webhook(raw, undefined)).status).toBe(401);
+    expect((await t.webhook(raw, null)).status).toBe(401);
     expect((await t.webhook(raw, '')).status).toBe(401);
     expect((await t.webhook(raw, sign(raw, 'other-secret'))).status).toBe(401);
     expect((await t.webhook(raw, 'abc')).status).toBe(401);
@@ -427,7 +428,7 @@ describe('POST /webhooks/mesh', () => {
   });
 
   it('is 401 before 400: an unsigned non-JSON body is 401', async () => {
-    expect((await setup().webhook('not json', undefined)).status).toBe(401);
+    expect((await setup().webhook('not json', null)).status).toBe(401);
   });
 
   it('is 200 for a signed object that carries none of the expected fields', async () => {
@@ -459,8 +460,9 @@ describe('POST /webhooks/mesh', () => {
   });
 
   it('settles end to end from a session started through the API, and dedups a retried delivery', async () => {
-    const t = setup({ invoice: { balance: 90_000_000n } });
+    const t = setup();
     const { id } = (await (await t.post(CLONE)).json()) as { id: string };
+    t.world.invoice(CLONE).balance = 90_000_000n; // the transfer lands
     const transactionId = JSON.parse(t.fetch.calls[0].body!).transferOptions.transactionId as string;
     const event = webhookEvent({ TransactionId: transactionId });
     t.world.receipts[event.TxHash] = { status: 'success' };

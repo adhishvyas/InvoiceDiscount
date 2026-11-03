@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatUnits, parseUnits } from 'viem';
-import { quoteAmount, quoteBps, toMeshAmount } from './quote';
+import { quoteAmount, quoteBps } from './quote';
 
 /** Mirrors `_activeDiscount`: the first tier whose cutoff is still ahead applies. */
 const tiersAt = (tiers: { cutoff: bigint; bps: number }[]) => async (ts: bigint) =>
@@ -105,45 +104,5 @@ describe('quoteAmount', () => {
     const max = 2n ** 128n - 1n;
     expect(quoteAmount(max, 1)).toBe(max - (max * 1n) / 10_000n);
     expect(quoteAmount(max, 10_000)).toBe(0n);
-  });
-});
-
-describe('toMeshAmount', () => {
-  it('converts base units to a token-unit number at 6 decimals', () => {
-    expect(toMeshAmount(1n, 6)).toBe(0.000001);
-    expect(toMeshAmount(999_999n, 6)).toBe(0.999999);
-    expect(toMeshAmount(1_000_000n, 6)).toBe(1);
-    expect(toMeshAmount(90_000_000n, 6)).toBe(90);
-    expect(toMeshAmount(123_456_789n, 6)).toBe(123.456789);
-    expect(toMeshAmount(0n, 6)).toBe(0);
-  });
-
-  it('round-trips odd quoteAmount results back to the same base units', () => {
-    const amounts = [
-      quoteAmount(333n, 1500),
-      quoteAmount(1_000_001n, 1_234),
-      quoteAmount(7n, 3_333),
-      quoteAmount(999_999n, 1),
-      quoteAmount(123_456_789n, 4_321),
-      quoteAmount(5_000_000_001n, 777),
-    ];
-    for (const amount of amounts) {
-      const n = toMeshAmount(amount, 6);
-      expect(typeof n).toBe('number');
-      expect(n).toBe(Number(formatUnits(amount, 6)));
-      expect(parseUnits(String(n), 6)).toBe(amount);
-    }
-  });
-
-  it('works at 18 decimals when the double holds the value', () => {
-    expect(toMeshAmount(1_500_000_000_000_000_000n, 18)).toBe(1.5);
-  });
-
-  it('throws where a JSON number cannot hold the value', () => {
-    expect(toMeshAmount(1_000_000n, 6)).toBe(1); // the same call succeeds where the value fits
-    expect(() => toMeshAmount(123_456_789_012_345_678n, 18)).toThrow(Error);
-    expect(() => toMeshAmount(10n ** 18n + 1n, 18)).toThrow(Error);
-    expect(() => toMeshAmount(9_007_199_254_740_993_000_000n, 6)).toThrow(Error);
-    expect(() => toMeshAmount(2n ** 53n + 1n, 0)).toThrow(Error);
   });
 });

@@ -3,19 +3,20 @@ import type { Address, Hash } from 'viem';
 /**
  * A Mesh session's state, as mesh-server reports it (Mesh spec §4.3).
  * - `awaiting-transfer`: created, no webhook yet.
- * - `pending`: a `Pending` webhook arrived (not guaranteed in sandbox; nothing depends on it).
- * - `succeeded`: a `Succeeded` webhook arrived and is being processed.
+ * - `pending`: a `pending` or `compliance_hold` status arrived (nothing depends on it).
+ * - `succeeded`: a `completed` status arrived and is being processed.
  * - `settled`: mesh-server's `settleDirect()` succeeded (`settleTx` set).
- * - `failed`: a `Failed` webhook arrived; the buyer can start again.
+ * - `failed`: a `failed` or `refunded` status arrived (`reason` says which); the buyer can start again.
  * - `needs-attention`: funds may have arrived but nothing was settled; `reason` says why.
  */
 export type SessionState = 'awaiting-transfer' | 'pending' | 'succeeded' | 'settled' | 'failed' | 'needs-attention';
 
-/** Who paid, from the `Succeeded` webhook (`SourceAccountProvider`, `SourceAddress`, `RefundAddress`). */
+/** Who paid, from the `completed` webhook. Mesh Pay v2 has no refund address. */
 export interface Payer {
+  /** The wallet or exchange name (e.g. `metamask`, `coinbase`). */
   provider?: string;
+  /** The wallet that sent the transfer; absent for an exchange. */
   sourceAddress?: string;
-  refundAddress?: string;
 }
 
 /**
@@ -40,8 +41,12 @@ export interface SessionView {
 /** The `201` body of `POST /invoices/:address/mesh-session` (Mesh spec §4.3). */
 export interface MeshSessionStart {
   id: string;
-  /** For Mesh Link's `openLink`. */
+  /** Mesh's single-use session token, for Mesh Link's `openLink`. */
   linkToken: string;
+  /** The Mesh client id, for `openLink`. */
+  clientId: string;
+  /** The Mesh Link environment, for `openLink`'s `environment` option. */
+  linkEnvironment: 'sbx' | 'prod';
   /** Base units, decimal string. */
   amount: string;
   /** `amount` formatted with the token's decimals. */

@@ -68,3 +68,33 @@ Red check on the stubs (test author): 150 of 165 failed. The 15 green ones are `
 | Spec gap | 3 | 2 |
 
 Every impl bug was found by a new test, not a ported one; both were latent in the Tempo code.
+
+## Mesh pay-now: frontend (node M2 of [`mesh-pay-now-dag.md`](mesh-pay-now-dag.md))
+
+> 2026-11-03. Tests: Sonnet 5.5 (agent B), black-box from Mesh spec §5 and the frozen `src/lib/actions.ts`, `src/lib/meshSession.ts` and `src/config.ts` at `ethereum-frontend-interface-v2` (`410a1c1`); branch `ethereum-frontend-mesh-tests` (`5fe6433`). Implementation: Opus frontend agent, F2–F4 on `ethereum-frontend-mesh` (`2fb9e27`, `636b3c7`, `08fff4d`), no sight of the tests. Merges `49f515c` (frontend), `98d8c49` (tests).
+
+### Result
+
+| Check | First run after merge |
+|---|---|
+| `corepack pnpm test` (186 tests: 51 new or changed by agent B, 135 existing) | all pass |
+| `corepack pnpm build` (`tsc -b` type-checks test files too) | passes |
+| `corepack pnpm lint` | passes |
+
+Red check on the stubs (test author): 51 of 51 new or changed `actions` and `meshSession` tests failed; the 2 new `config` tests passed, since `config.ts` is data written in full at the tag (as in port M2). Before the merge, the implementation branch's `tsc -b` failed only on 3 errors in the old `actions.test.ts` (missing `meshSupported`/`payWithMesh`), which agent B's branch fixes. Isolation: agent B's list of files read stays inside its brief (no other `src/lib` bodies, pages, hooks, `mesh-server/src`, `tempo/frontend/src` or `actions.ts` history).
+
+### Findings
+
+| # | Test | Classification | Resolution |
+|---|---|---|---|
+| 9 | SPEC-QUESTION 5: `payWithMesh` when `dueNow == 0` (a 100% discount tier) | **spec gap** (minor) | Tests and implementation both read `cloneBalance < dueNow` literally (false). Consistent with mesh-server's `409 already paid` (balance ≥ due) and with Mesh needing a non-zero amount. No spec change proposed |
+| 10 | SPEC-QUESTION 6: "unset" `VITE_MESH_SERVER_URL` tested as an empty string | **spec gap** (minor) | Same as the existing config tests; `|| undefined` makes them equal. No spec change proposed |
+
+No **impl bugs** and no **test bugs**.
+
+### Implementation notes (frontend agent, beyond the plan's wording)
+
+- `@meshconnect/web-link-sdk` **3.15.0**, pinned without S1 (Mesh auth is blocked): `createLink(options)` then `link.openLink(linkToken)`; callbacks `onTransferFinished(payload)` and `onExit(error?, summary?)`, from the package's `.d.ts`. pnpm warns about an unmet `bs58@^6` peer in its Solana dependencies.
+- The SDK is **loaded lazily** on Continue to Mesh: importing it injects a prewarm iframe (`web.meshconnect.com/prewarm`) into every page, even with `VITE_MESH_SERVER_URL` unset. It's in its own 309 kB chunk.
+- The Pay with Mesh section stays on screen while a flow is running, even after `payWithMesh` turns false (the balance reaching the amount due would otherwise hide the progress line).
+- Once `expiresAt` passes, the confirm button becomes "Quote expired; get a new one".

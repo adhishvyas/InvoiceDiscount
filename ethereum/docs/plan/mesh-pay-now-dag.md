@@ -304,11 +304,15 @@ Spec questions go in `ethereum/mesh-server/SPEC_QUESTIONS.md`, tests marked `// 
 
 ### F2 — lib bodies + config (frontend agent)
 
+> **Status:** ✅ **Completed** 2026-11-03 (`2fb9e27`). Exports identical to the v2 tag.
+
 Restore `visibleActions` with the new flag; implement `isFinalMeshState`.
 
 **Verify:** `tsc --noEmit`; exports identical to the v2 tag.
 
 ### F3 — `useMeshPay` hook (frontend agent, in parallel with F2)
+
+> **Status:** ✅ **Completed** 2026-11-03 (`636b3c7`). SDK 3.15.0 pinned without S1; API taken from its `.d.ts`; loaded lazily (see [findings](test-lane-findings.md#mesh-pay-now-frontend-node-m2-of-mesh-pay-now-dagmd)).
 
 Add `@meshconnect/web-link-sdk` (version pinned in S1). `hooks/useMeshPay.ts`:
 
@@ -321,6 +325,8 @@ Add `@meshconnect/web-link-sdk` (version pinned in S1). `hooks/useMeshPay.ts`:
 
 ### F4 — InvoiceDetail UI (frontend agent)
 
+> **Status:** ✅ **Completed** 2026-11-03 (`08fff4d`). Build and lint clean; visual check in I2.
+
 - Compute `meshSupported` and pass it to `visibleActions`.
 - **Pay with Mesh** button, visible with no wallet connected → confirm box: "Pay **X PYUSD** now (Y% discount) to invoice `INV-…`. Quote valid until hh:mm:ss." → Link → progress line (`awaiting-transfer` / `pending` / `succeeded` / `settled` with an Etherscan link to `settleTx` / `failed` with "Try again" / `needs-attention` with the reason and a pointer to Finish settlement or Accept and settle).
 - History: a "Paid via Mesh" line (provider, refund address) from the latest session in `succeeded`/`settled`/`needs-attention`.
@@ -329,6 +335,8 @@ Add `@meshconnect/web-link-sdk` (version pinned in S1). `hooks/useMeshPay.ts`:
 **Verify:** `corepack pnpm build` and `corepack pnpm lint`; with `VITE_MESH_SERVER_URL` unset the button never renders. Visual check in I2.
 
 ### U1 — Frontend tests, red against the stubs (Sonnet agent B)
+
+> **Status:** ✅ **Completed** 2026-11-03 (`5fe6433`). 51 new or changed tests, 51/51 red against the stubs; 2 spec questions.
 
 - `actions.test.ts`: extend with `payWithMesh` across: no account / buyer-to-be / seller; Active vs Funded/Paid/Cancelled; `cloneBalance` 0, `dueNow − 1`, `dueNow`, above; `meshSupported` false (the USDC case and the unset-server case). Assert that every **other** flag stays false with no account (only `payWithMesh` is the exception). Existing cases keep passing with `meshSupported` added to their context.
 - `meshSession.test.ts`: `isFinalMeshState` for all six states.
@@ -343,6 +351,8 @@ As port M1: merge T1's branch into the server branch; `corepack pnpm test` and `
 **Verify:** test and typecheck pass; findings logged; coverage of `webhook.ts` and `app.ts` routes ≥ 90% lines.
 
 ### M2 — Frontend merge + triage (main session)
+
+> **Status:** ✅ **Completed** 2026-11-03 (`49f515c`, `98d8c49`). 186 tests, build and lint pass on the first run; 0 impl bugs, 0 test bugs, 2 minor spec gaps with no change proposed. See [`test-lane-findings.md`](test-lane-findings.md#mesh-pay-now-frontend-node-m2-of-mesh-pay-now-dagmd).
 
 As port M2: merge the frontend branch and U1's branch; `corepack pnpm test`, `build`, `lint`; triage into `test-lane-findings.md` under "Mesh pay-now: frontend".
 

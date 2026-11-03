@@ -1,6 +1,9 @@
 // INTERFACE FREEZE (tag ethereum-mesh-server-interface-v1): exported names, signatures and documented behaviour.
-import type { Address, Client, Hash } from 'viem';
-import type { SessionStore } from './sessions';
+import { BaseError, ContractFunctionRevertedError, getAddress, type Address, type Client, type Hash } from 'viem';
+import { waitForTransactionReceipt } from 'viem/actions';
+import { decodeTransactionId } from './ids';
+import { dueNow, isClone, readInvoice, Status, STATUS_NAME, tokenBalance } from './invoice';
+import type { Session, SessionStore } from './sessions';
 
 /** The fields of a Mesh transfer webhook this server reads (explainer §6). Other fields are ignored. */
 export interface MeshWebhookEvent {
@@ -67,5 +70,119 @@ export interface WebhookContext {
  *    - Any other status: ignored.
  */
 export function createEventProcessor(ctx: WebhookContext): (event: MeshWebhookEvent) => Promise<void> {
-  throw new Error('unimplemented');
+  const seen = new Set<string>();
+  const queues = new Map<Address, Promise<void>>();
+
+  return async (event) => {
+    try {
+      if (typeof event?.EventId !== 'string' || seen.has(event.EventId)) return;
+      seen.add(event.EventId);
+      // Find the invoice synchronously, so events for one invoice queue in arrival order.
+      const invoice = ctx.sessions.byTransactionId(event.TransactionId)?.invoice ?? decodeTransactionId(event.TransactionId)?.invoice;
+      if (!invoice) return console.warn(`webhook ${event.EventId}: undecodable TransactionId, ignored`);
+      const run = (queues.get(invoice) ?? Promise.resolve()).then(() => handle(ctx, invoice, event));
+      queues.set(invoice, run);
+      await run;
+      if (queues.get(invoice) === run) queues.delete(invoice);
+    } catch (error) {
+      console.error(`webhook ${String(event?.EventId)}:`, error);
+    }
+  };
+}
+
+/** One event, with the invoice's queue held. Never rejects. */
+async function handle(ctx: WebhookContext, invoice: Address, event: MeshWebhookEvent): Promise<void> {
+  let session: Session | undefined;
+  try {
+    session = await sessionFor(ctx, invoice, event);
+    if (!session) return;
+    await apply(ctx, session, event);
+  } catch (error) {
+    console.error(`webhook ${event.EventId}:`, error);
+    if (session) ctx.sessions.update(session.id, { state: 'needs-attention', reason: errorReason(error) });
+  }
+}
+
+/** The event's session, recreated from its `TransactionId` if this process lost it (a clone of `factory` only). */
+async function sessionFor(ctx: WebhookContext, invoice: Address, event: MeshWebhookEvent): Promise<Session | undefined> {
+  const known = ctx.sessions.byTransactionId(event.TransactionId);
+  if (known) return known;
+  const decoded = decodeTransactionId(event.TransactionId);
+  if (!decoded) return undefined;
+  if (!(await isClone(ctx.client, ctx.factory, invoice))) {
+    console.warn(`webhook ${event.EventId}: ${invoice} is not an invoice of this factory, ignored`);
+    return undefined;
+  }
+  return ctx.sessions.create({
+    id: decoded.id,
+    invoice,
+    transactionId: event.TransactionId,
+    amount: 0n,
+    discountBps: 0,
+    symbol: event.Token ?? '',
+    expiresAt: 0n,
+  });
+}
+
+async function apply(ctx: WebhookContext, session: Session, event: MeshWebhookEvent): Promise<void> {
+  const { sessions, client } = ctx;
+  const id = session.id;
+  const attention = (reason: string) => void sessions.update(id, { state: 'needs-attention', reason });
+
+  switch (event.TransferStatus) {
+    case 'Pending':
+      if (session.state === 'awaiting-transfer') sessions.update(id, { state: 'pending' });
+      return;
+    case 'Failed':
+      if (session.state === 'awaiting-transfer' || session.state === 'pending') sessions.update(id, { state: 'failed' });
+      return;
+    case 'Succeeded':
+      break;
+    default:
+      return;
+  }
+  if (session.state === 'settled') return;
+
+  const txHash = event.TxHash ? (event.TxHash as Hash) : undefined;
+  sessions.update(id, {
+    state: 'succeeded',
+    reason: undefined,
+    transferTx: txHash ?? session.transferTx,
+    payer: { provider: event.SourceAccountProvider, sourceAddress: event.SourceAddress, refundAddress: event.RefundAddress },
+  });
+
+  if (event.DestinationAddress?.toLowerCase() !== session.invoice.toLowerCase()) return attention('destination mismatch');
+  if (event.Chain !== ctx.chainName) return attention('chain mismatch');
+
+  // Wait for the reported transfer, but don't trust it either way: the balance below decides.
+  if (txHash) await waitForTransactionReceipt(client, { hash: txHash, timeout: ctx.receiptTimeoutMs }).catch(() => undefined);
+
+  const invoice = await readInvoice(client, session.invoice);
+  if (event.Token !== ctx.meshTokens[getAddress(invoice.token)]) return attention('token mismatch');
+  if (invoice.status === Status.Paid) return attention('already Paid');
+  if (invoice.status !== Status.Active) return attention(`invoice is ${STATUS_NAME[invoice.status]}`);
+
+  const [balance, due] = await Promise.all([tokenBalance(client, invoice.token, session.invoice), dueNow(client, session.invoice, invoice)]);
+  if (!(balance > 0n && balance >= due)) return attention(`insufficient balance: ${balance} < ${due}`);
+
+  let settleTx: Hash;
+  try {
+    settleTx = await ctx.settle(session.invoice);
+  } catch (error) {
+    return attention(errorReason(error));
+  }
+  sessions.update(id, { settleTx });
+  const receipt = await waitForTransactionReceipt(client, { hash: settleTx });
+  if (receipt.status === 'success') sessions.update(id, { state: 'settled' });
+  else attention('settleDirect reverted');
+}
+
+/** The custom error name from a contract revert, else viem's short message, else the error's message. */
+function errorReason(error: unknown): string {
+  if (error instanceof BaseError) {
+    const revert = error.walk((e) => e instanceof ContractFunctionRevertedError);
+    if (revert instanceof ContractFunctionRevertedError && revert.data?.errorName) return revert.data.errorName;
+    return error.shortMessage;
+  }
+  return error instanceof Error ? error.message : String(error);
 }

@@ -1,9 +1,19 @@
 // INTERFACE FREEZE (tag ethereum-mesh-server-interface-v1): exported names, signatures and documented behaviour.
-import type { Hono } from 'hono';
-import type { Address, Client, Hash } from 'viem';
-import type { MeshApiConfig } from './mesh';
-import type { SessionStore } from './sessions';
-import type { MeshWebhookEvent } from './webhook';
+import { Hono } from 'hono';
+import { cors } from 'hono/cors';
+import { erc20Abi, formatUnits, getAddress, isAddress, type Address, type Client, type Hash } from 'viem';
+import { getBlock, readContract } from 'viem/actions';
+import { invoiceEscrowAbi } from './abi/InvoiceEscrow';
+import { encodeTransactionId, newSessionId } from './ids';
+import { isClone, readInvoice, Status, STATUS_NAME, tokenBalance } from './invoice';
+import { MeshApiError, requestLinkToken, type MeshApiConfig } from './mesh';
+import { quoteAmount, quoteBps, QUOTE_WINDOW, toMeshAmount } from './quote';
+import { SessionStore, sessionView } from './sessions';
+import { verifyMeshSignature } from './signature';
+import { createEventProcessor, type MeshWebhookEvent } from './webhook';
+
+/** The Link Token's life (Mesh docs: 10 minutes). */
+const LINK_TOKEN_LIFE = 600n;
 
 export interface AppConfig {
   /** CORS origin, matched exactly. */
@@ -65,5 +75,90 @@ export function createApp(config: AppConfig): {
   sessions: SessionStore;
   processEvent: (event: MeshWebhookEvent) => Promise<void>;
 } {
-  throw new Error('unimplemented');
+  const { client } = config;
+  const sessions = config.sessions ?? new SessionStore();
+  const processEvent = createEventProcessor({ ...config, sessions });
+  const app = new Hono();
+  app.use('*', cors({ origin: config.allowedOrigin }));
+
+  app.get('/health', (c) => c.json({ ok: true }));
+
+  app.post('/invoices/:address/mesh-session', async (c) => {
+    const param = c.req.param('address');
+    if (!isAddress(param)) return c.json({ error: 'invalid address' }, 400);
+    const address = getAddress(param);
+    if (!(await isClone(client, config.factory, address))) return c.json({ error: 'not an invoice of this factory' }, 404);
+
+    const invoice = await readInvoice(client, address);
+    if (invoice.status !== Status.Active) return c.json({ error: 'invoice is not Active', status: STATUS_NAME[invoice.status] }, 409);
+    const token = getAddress(invoice.token);
+    const symbol = config.meshTokens[token];
+    if (!symbol) return c.json({ error: 'token not supported by Mesh', token }, 422);
+
+    const { timestamp: t } = await getBlock(client);
+    const discountAt = (ts: bigint) => readContract(client, { address, abi: invoiceEscrowAbi, functionName: 'activeDiscount', args: [ts] });
+    const [balance, bpsNow, decimals] = await Promise.all([
+      tokenBalance(client, token, address),
+      discountAt(t),
+      readContract(client, { address: token, abi: erc20Abi, functionName: 'decimals' }),
+    ]);
+    const due = quoteAmount(invoice.principal, bpsNow);
+    if (balance >= due) return c.json({ error: 'already paid', balance: balance.toString(), due: due.toString() }, 409);
+
+    const discountBps = await quoteBps(t, invoice.tiers.map((tier) => tier.cutoff), discountAt, QUOTE_WINDOW);
+    const amount = quoteAmount(invoice.principal, discountBps);
+    const id = newSessionId();
+    const transactionId = encodeTransactionId(address, id);
+    let linkToken: string;
+    try {
+      linkToken = await requestLinkToken(config.meshApi, {
+        invoice: address,
+        symbol,
+        amount: toMeshAmount(amount, decimals),
+        networkId: config.networkId,
+        transactionId,
+        userId: `buyer-${id}`,
+      });
+    } catch (error) {
+      if (error instanceof MeshApiError) return c.json({ error: error.message, status: error.status }, 502);
+      throw error;
+    }
+
+    const expiresAt = t + LINK_TOKEN_LIFE;
+    sessions.create({ id, invoice: address, transactionId, amount, discountBps, symbol, expiresAt });
+    return c.json(
+      { id, linkToken, amount: amount.toString(), displayAmount: formatUnits(amount, decimals), symbol, discountBps, expiresAt: Number(expiresAt) },
+      201,
+    );
+  });
+
+  app.get('/invoices/:address/mesh-session/:id', (c) => {
+    const param = c.req.param('address');
+    if (!isAddress(param)) return c.json({ error: 'invalid address' }, 400);
+    const session = sessions.get(c.req.param('id'));
+    if (!session || session.invoice.toLowerCase() !== param.toLowerCase()) return c.json({ error: 'unknown session' }, 404);
+    return c.json(sessionView(session));
+  });
+
+  app.get('/invoices/:address/mesh-sessions', (c) => {
+    const param = c.req.param('address');
+    if (!isAddress(param)) return c.json({ error: 'invalid address' }, 400);
+    return c.json({ sessions: sessions.forInvoice(param).map(sessionView) });
+  });
+
+  app.post('/webhooks/mesh', async (c) => {
+    const raw = await c.req.text();
+    if (!verifyMeshSignature(raw, c.req.header('X-Mesh-Signature-256'), config.webhookSecret)) return c.json({ error: 'bad signature' }, 401);
+    let event: unknown;
+    try {
+      event = JSON.parse(raw);
+    } catch {
+      return c.json({ error: 'body is not JSON' }, 400);
+    }
+    if (typeof event !== 'object' || event === null || Array.isArray(event)) return c.json({ error: 'body is not a JSON object' }, 400);
+    void processEvent(event as MeshWebhookEvent);
+    return c.json({ ok: true });
+  });
+
+  return { app, sessions, processEvent };
 }

@@ -50,7 +50,17 @@ export class MeshApiError extends Error {
  * `restrictMultipleAccounts: true`, and exactly one `toAddresses` entry. `address` is passed through as given.
  */
 export function linkTokenRequestBody(p: LinkTokenParams): LinkTokenRequestBody {
-  throw new Error('unimplemented');
+  return {
+    userId: p.userId,
+    restrictMultipleAccounts: true,
+    transferOptions: {
+      transferType: 'payment',
+      transactionId: p.transactionId,
+      isInclusiveFeeEnabled: false,
+      generatePayLink: false,
+      toAddresses: [{ networkId: p.networkId, symbol: p.symbol, address: p.invoice, amount: p.amount }],
+    },
+  };
 }
 
 /**
@@ -63,5 +73,24 @@ export function linkTokenRequestBody(p: LinkTokenParams): LinkTokenRequestBody {
  * - when `fetch` itself rejects (network error), with `status` undefined.
  */
 export async function requestLinkToken(config: MeshApiConfig, p: LinkTokenParams): Promise<string> {
-  throw new Error('unimplemented');
+  const doFetch = config.fetch ?? fetch;
+  let res: Response;
+  try {
+    res = await doFetch(`${config.baseUrl}/api/v1/linktoken`, {
+      method: 'POST',
+      headers: { 'X-Client-Id': config.clientId, 'X-Client-Secret': config.apiKey, 'Content-Type': 'application/json' },
+      body: JSON.stringify(linkTokenRequestBody(p)),
+    });
+  } catch (error) {
+    throw new MeshApiError(`Mesh request failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (!res.ok) throw new MeshApiError(`Mesh returned ${res.status}: ${(await res.text().catch(() => '')).slice(0, 200)}`, res.status);
+  let linkToken: unknown;
+  try {
+    linkToken = ((await res.json()) as { content?: { linkToken?: unknown } } | null)?.content?.linkToken;
+  } catch {
+    throw new MeshApiError('Mesh response is not JSON', res.status);
+  }
+  if (typeof linkToken !== 'string' || linkToken === '') throw new MeshApiError('Mesh response has no content.linkToken', res.status);
+  return linkToken;
 }

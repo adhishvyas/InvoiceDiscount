@@ -2,11 +2,12 @@ import { getAddress, isAddress, isHex, type Address, type Hex } from 'viem';
 
 export interface Env {
   meshClientId: string;
-  meshApiKey: string;
+  /** The client secret (`MESH_API_KEY`). */
+  meshClientSecret: string;
   meshApiUrl: string;
+  linkEnvironment: 'sbx' | 'prod';
   webhookSecret: string;
-  networkId: string;
-  chainName: string;
+  networkCaip2: string;
   /** Mesh-supported token address → the symbol Mesh uses for it. */
   meshTokens: Record<Address, string>;
   settlerKey: Hex;
@@ -39,13 +40,15 @@ export function readEnv(): Env {
   const factory = required('FACTORY_ADDRESS');
   if (!isHex(settlerKey) || settlerKey.length !== 66) throw new Error('SETTLER_PRIVATE_KEY must be a 0x-prefixed 32-byte hex key');
   if (!isAddress(factory)) throw new Error('FACTORY_ADDRESS is not an address');
+  const linkEnvironment = process.env.MESH_LINK_ENV || 'sbx';
+  if (linkEnvironment !== 'sbx' && linkEnvironment !== 'prod') throw new Error('MESH_LINK_ENV must be sbx or prod');
   return {
     meshClientId: required('MESH_CLIENT_ID'),
-    meshApiKey: required('MESH_API_KEY'),
-    meshApiUrl: process.env.MESH_API_URL || 'https://sandbox-integration-api.meshconnect.com',
+    meshClientSecret: required('MESH_API_KEY'),
+    meshApiUrl: (process.env.MESH_API_URL || 'https://api.sbx.meshpay.com').replace(/\/+$/, ''),
+    linkEnvironment,
     webhookSecret: required('MESH_WEBHOOK_SECRET'),
-    networkId: required('MESH_NETWORK_ID'),
-    chainName: required('MESH_CHAIN_NAME'),
+    networkCaip2: process.env.MESH_NETWORK_CAIP2 || 'eip155:11155111',
     meshTokens: parseTokens(required('MESH_TOKENS')),
     settlerKey,
     factory: getAddress(factory),

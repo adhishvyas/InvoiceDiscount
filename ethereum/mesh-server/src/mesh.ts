@@ -1,67 +1,105 @@
-// INTERFACE FREEZE (tag ethereum-mesh-server-interface-v1): exported names, signatures and documented behaviour.
+// INTERFACE FREEZE (tag ethereum-mesh-server-interface-v2): exported names, signatures and documented behaviour.
 import type { Address } from 'viem';
 
 export interface MeshApiConfig {
-  /** e.g. `https://sandbox-integration-api.meshconnect.com` (no trailing slash). */
+  /** e.g. `https://api.sbx.meshpay.com` (no trailing slash). Its host is the OAuth `audience`. */
   baseUrl: string;
   clientId: string;
-  apiKey: string;
+  /** The client secret (`MESH_API_KEY`). */
+  clientSecret: string;
   /** Defaults to the global `fetch`; tests pass a fake. */
   fetch?: typeof fetch;
+  /** Milliseconds since the epoch, for the token cache. Defaults to `Date.now`; tests pass a fake clock. */
+  now?: () => number;
 }
 
-export interface LinkTokenParams {
+/** The scope mesh-server asks for: it only creates sessions. */
+export const MESH_SCOPE = 'sessions:edit';
+
+/** A cached token is replaced this many seconds before its `expires_in` runs out. */
+export const TOKEN_REFRESH_MARGIN_SECONDS = 60;
+
+export interface PaymentSessionParams {
   /** The invoice clone: the one destination. */
   invoice: Address;
   /** Mesh's symbol for the invoice token, e.g. `PYUSD`. */
   symbol: string;
-  /** From `toMeshAmount`. */
-  amount: number;
-  networkId: string;
-  transactionId: string;
+  /** The exact token amount, a decimal string in token units (`formatUnits(amount, decimals)`). */
+  amount: string;
+  /** CAIP-2 network id, e.g. `eip155:11155111`. */
+  networkCaip2: string;
+  /** Ours, from `encodeTransactionId`. */
+  clientTransactionId: string;
   userId: string;
+  /** Sent as the `Idempotency-Key` header. */
+  idempotencyKey: string;
 }
 
-export interface LinkTokenRequestBody {
+export interface CreateSessionBody {
   userId: string;
-  restrictMultipleAccounts: true;
   transferOptions: {
-    transferType: 'payment';
-    transactionId: string;
-    isInclusiveFeeEnabled: false;
-    generatePayLink: false;
-    toAddresses: [{ networkId: string; symbol: string; address: Address; amount: number }];
+    type: 'TRANSFER_TYPE_PAYMENT';
+    clientTransactionId: string;
+    toAddresses: [{ networkCaip2: string; symbol: string; address: Address; amount: string }];
   };
 }
 
-/** A failed Link Token request. `status` is Mesh's HTTP status, or undefined if no usable response arrived. */
+/** What `POST /v2/sessions` returned that mesh-server uses. */
+export interface MeshSession {
+  /** Single-use exchange code for `openLink()`. */
+  token: string;
+  sessionId: string;
+  /** RFC 3339, as Mesh sent it. */
+  expiresAt: string;
+}
+
+/**
+ * A failed Mesh call. `status` is Mesh's HTTP status, or undefined if no usable response arrived (network error).
+ * `code` is Mesh's `error.code` from its error envelope, when the body has one.
+ */
 export class MeshApiError extends Error {
   readonly status: number | undefined;
-  constructor(message: string, status?: number) {
+  readonly code: string | undefined;
+  constructor(message: string, status?: number, code?: string) {
     super(message);
     this.name = 'MeshApiError';
     this.status = status;
+    this.code = code;
   }
 }
 
 /**
- * The `POST /api/v1/linktoken` body for a fixed payment of `amount` `symbol` to `invoice` (Mesh spec §4.3 step 6):
- * `transferType: "payment"`, `isInclusiveFeeEnabled: false`, `generatePayLink: false`,
- * `restrictMultipleAccounts: true`, and exactly one `toAddresses` entry. `address` is passed through as given.
+ * The `POST /v2/sessions` body for a fixed payment of `amount` `symbol` to `invoice` (Mesh spec §4.3 step 6):
+ * `transferOptions.type: "TRANSFER_TYPE_PAYMENT"`, `clientTransactionId`, and exactly one `toAddresses` entry
+ * `{ networkCaip2, symbol, address: invoice, amount }`. No `amountInFiat`. `address` is passed through as given.
  */
-export function linkTokenRequestBody(p: LinkTokenParams): LinkTokenRequestBody {
+export function paymentSessionBody(p: PaymentSessionParams): CreateSessionBody {
   throw new Error('unimplemented');
 }
 
-/**
- * `POST ${baseUrl}/api/v1/linktoken` with headers `X-Client-Id`, `X-Client-Secret` and
- * `Content-Type: application/json`, and `linkTokenRequestBody(p)` as the JSON body. Returns `content.linkToken`
- * from the response (§6.1 fallback shape).
- * Throws `MeshApiError`:
- * - on a non-2xx response, with that status;
- * - on a 2xx response whose body isn't JSON or has no non-empty string `content.linkToken`, with that 2xx status;
- * - when `fetch` itself rejects (network error), with `status` undefined.
- */
-export async function requestLinkToken(config: MeshApiConfig, p: LinkTokenParams): Promise<string> {
+export interface MeshClient {
+  /**
+   * A bearer token for `/v2` calls. Minted with `POST ${baseUrl}/oauth2/token`:
+   * `Authorization: Basic base64(clientId:clientSecret)`, `Content-Type: application/x-www-form-urlencoded`, body
+   * `grant_type=client_credentials&audience=<host of baseUrl>&scope=sessions:edit`. The response's `access_token` is
+   * cached and returned until `expires_in - TOKEN_REFRESH_MARGIN_SECONDS` seconds after it was minted (per `now`),
+   * then a new one is minted. Concurrent callers while a mint is in flight share that one request. A failed mint
+   * isn't cached: the next call tries again.
+   * Throws `MeshApiError`: non-2xx (with the status), a 2xx without a non-empty string `access_token` or a numeric
+   * `expires_in` (with the 2xx status), or `fetch` rejecting (status undefined).
+   */
+  accessToken(): Promise<string>;
+  /**
+   * `POST ${baseUrl}/v2/sessions` with `Authorization: Bearer <accessToken()>`, `Idempotency-Key: <p.idempotencyKey>`,
+   * `Content-Type: application/json` and `paymentSessionBody(p)` as the JSON body. Returns `{ token, sessionId, expiresAt }`.
+   * On a `401` the cached token is dropped (the next call mints a new one) and the error is thrown; there is no retry.
+   * Throws `MeshApiError` as `accessToken()` does, and also for a non-2xx session response (with the status and
+   * `error.code` when present) or a 2xx without a non-empty string `token`.
+   */
+  createPaymentSession(p: PaymentSessionParams): Promise<MeshSession>;
+}
+
+/** A Mesh API client with its own token cache (one per process). */
+export function createMeshClient(config: MeshApiConfig): MeshClient {
   throw new Error('unimplemented');
 }

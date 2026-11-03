@@ -1,6 +1,6 @@
 # InvoiceDiscount on Ethereum: Pay Now via Mesh
 
-> Status: draft, revised November 2026 after the Ethereum port was implemented and deployed on Sepolia. Not yet planned or implemented. It builds on the port ([`invoice-discount-spec.md`](invoice-discount-spec.md), the "port spec"; §3) and reuses the Pay now design from the Tempo MPP spec ([`../../../tempo/docs/spec/mpp-pay-now-spec.md`](../../../tempo/docs/spec/mpp-pay-now-spec.md), the "MPP spec"), but swaps MPP for Mesh as the way the money arrives. How Mesh works is covered in [`../explainer/mesh-how-it-works.md`](../explainer/mesh-how-it-works.md).
+> Status: draft, revised November 2026 after the Ethereum port was implemented and deployed on Sepolia, and again after the Mesh spike (S1) found that the dashboard's keys are for the **Mesh Pay v2 API**, not the legacy API the first draft followed. Planned in [`../plan/mesh-pay-now-dag.md`](../plan/mesh-pay-now-dag.md). It builds on the port ([`invoice-discount-spec.md`](invoice-discount-spec.md), the "port spec"; §3) and reuses the Pay now design from the Tempo MPP spec ([`../../../tempo/docs/spec/mpp-pay-now-spec.md`](../../../tempo/docs/spec/mpp-pay-now-spec.md), the "MPP spec"), but swaps MPP for Mesh as the way the money arrives. How Mesh works is covered in [`../explainer/mesh-how-it-works.md`](../explainer/mesh-how-it-works.md).
 
 ---
 
@@ -11,9 +11,9 @@ Let a buyer pay an Active invoice **from any exchange account or wallet Mesh sup
 The flow:
 
 1. The buyer clicks **Pay with Mesh** on an Active invoice.
-2. Our new **mesh-server** checks the invoice, works out the amount due now, and asks Mesh for a **Link Token**: a one-time session that pays exactly that amount, in the invoice's token, on Ethereum, to the **invoice clone's address**.
-3. The frontend opens **Mesh Link** (Mesh's hosted modal) with the token. The buyer connects an exchange or wallet and approves the transfer inside Link.
-4. Mesh moves the funds into the clone and sends mesh-server a signed **webhook** when the transfer succeeds.
+2. Our new **mesh-server** checks the invoice, works out the amount due now, and asks Mesh for a **payment session**: a single-use token for Mesh Link that pays exactly that amount, in the invoice's token, on Ethereum, to the **invoice clone's address**.
+3. The frontend opens **Mesh Link** (Mesh's hosted modal) with the token. The buyer connects an exchange or wallet and approves the transfer inside Link. When Link closes, the frontend polls mesh-server for the outcome.
+4. Mesh moves the funds into the clone and sends mesh-server a signed **webhook** (`transfer.completed`) when the transfer succeeds.
 5. mesh-server checks on-chain that the clone holds enough, then calls the permissionless **`settleDirect()`**. The invoice becomes Paid and the funds go to the seller's payout address.
 
 The existing fund → trigger path stays. Whichever path settles an Active invoice first wins.
@@ -24,20 +24,21 @@ The existing fund → trigger path stays. Whichever path settles an Active invoi
 
 | Topic | Decision | Why |
 |---|---|---|
-| Chain | **Ethereum**, with **Sepolia** for development | Mesh's sandbox has no Tempo testnet. Sepolia is a sandbox testnet with real on-chain wallet transfers |
+| Chain | **Ethereum**, with **Sepolia** (`eip155:11155111`) for development | Mesh's sandbox has no Tempo testnet. Sepolia is a sandbox testnet with real on-chain wallet transfers |
+| Mesh API | **Mesh Pay v2** (`api.sbx.meshpay.com`): OAuth client credentials, `POST /v2/sessions`, `@meshpayhq/link-web-sdk`, envelope webhooks (explainer §3–§6) | The dashboard's keys are for v2; the legacy API in the public docs rejects them (verification notes, Mesh spike) |
 | Invoice path | **Pay now via `settleDirect()`** (port spec §3.5), unchanged. **No contract change** | A Mesh transfer is a plain token transfer, so it can't call `fund()`, which pulls tokens with `transferFrom`. `settleDirect()` already settles from the clone's balance |
 | Who is paid | The **invoice clone** is the Mesh `toAddress`. It forwards the funds to the payout address in `settleDirect()` | Keeps the contract the source of truth for status. Each invoice has its own address, so Mesh's transfer is attributed to the invoice without a memo |
-| Mesh transfer type | **`payment`**, with one fixed `amount` and one destination | `payment` is Mesh's fixed-amount flow. A `deposit` lets the user pick the amount, which invites underpayment |
-| Fees | `isInclusiveFeeEnabled: false` | Mesh fees are added on top, so the clone receives the full quoted amount |
-| Tokens | Only invoices whose token Mesh supports on the target network. On Sepolia: **PYUSD** and **USDG**, if Mesh uses the same contracts as the port (§6.1) | Mesh can only deliver its listed token/network pairs. Pay with Mesh is hidden for other tokens, including **USDC**, which the port's token list offers but Mesh's Sepolia sandbox doesn't |
-| Sources of funds | **Mesh Link** with exchanges and wallets, including the manual QR/copy-paste fallback Link offers by default | What "any wallet" means in this PoC. Cross-chain bridging is out of scope (§8) |
+| Mesh transfer type | **`TRANSFER_TYPE_PAYMENT`**, with one destination and its exact token `amount` | `payment` is Mesh's fixed-amount flow. A `deposit` lets the user pick the amount, which invites underpayment. The amount is given in token units, not `amountInFiat`, because the contract checks a token amount |
+| Fees | Not configurable in v2 (no `isInclusiveFeeEnabled`). `amount` is what the destination should receive | If Mesh delivers less, the balance check refuses to settle (`needs-attention`) and the seller can Accept and settle. Checked in the end-to-end run (§6.3) |
+| Tokens | Only invoices whose token is in the Mesh-supported list. On Sepolia: **PYUSD** and **USDG** | Pay with Mesh is hidden for other tokens, including **USDC**. Mesh's sandbox docs list Sepolia wallet transfers in **native ETH only**, though session creation accepts PYUSD and USDG; the plan's I1 checks in Link first (user decision), and if Link can't pay ERC-20 the user asks Mesh to enable it (§6.2) |
+| Sources of funds | **Mesh Link** with exchanges and wallets, including the manual send-to-address path Link offers | What "any wallet" means in this PoC. Cross-chain bridging is out of scope (§8) |
 | Pricing | Same idea as MPP spec §4.2: the **smallest discount that applies at any moment in the quote window** | The payment must still cover the amount due when `settleDirect()` runs. The window here is longer (§4.2) |
-| Confirmation | The **webhook is a trigger, the chain is the truth.** mesh-server settles only after checking the clone's on-chain balance | Webhooks can be retried, delayed or (in sandbox) describe simulated transfers. A false `Succeeded` must never cause a bad settlement. `settleDirect()` enforces the amount anyway |
+| Confirmation | The **webhook is a trigger, the chain is the truth.** mesh-server settles only after checking the clone's on-chain balance | Webhooks can be retried, delayed or (in sandbox) describe simulated transfers. A false `completed` must never cause a bad settlement. `settleDirect()` enforces the amount anyway |
 | Gas for `settleDirect()` | Paid in Sepolia ETH by the mesh-server **settler key** | Ethereum has no fee sponsorship. The key has no special rights in the contract |
 | Gas for the payer | Handled inside Mesh Link: exchanges pay their own withdrawal fees; wallet users pay ETH gas from their own wallet | The buyer doesn't need a wallet connected to our app |
-| Server | New **`ethereum/mesh-server/`** service, started from a copy of `tempo/mpp-server/` (Hono + viem) with `mppx` removed | User decision. It holds the Mesh API secret, the webhook secret and the settler key. Copying keeps the proven clone check and quote code (§4.1), the same way the port copied the Tempo frontend |
-| Session state | **In memory**, one instance. `transactionId` encodes the invoice address (§4.3) | As `mpp-server`. A restart loses session details, but a later `Succeeded` webhook can still be acted on: the invoice is read from `transactionId` and the chain decides |
-| Buyer identity | Not recorded on-chain. The payer's source and refund address come from the webhook and are shown off-chain | Same position as the MPP spec: a permissionless `settleDirect()` can't prove who paid |
+| Server | New **`ethereum/mesh-server/`** service, started from a copy of `tempo/mpp-server/` (Hono + viem) with `mppx` removed | User decision. It holds the Mesh client secret (and the bearer token it mints), the webhook secret and the settler key. Copying keeps the proven clone check and quote code (§4.1), the same way the port copied the Tempo frontend |
+| Session state | **In memory**, one instance. `clientTransactionId` encodes the invoice address (§4.3) | As `mpp-server`. A restart loses session details, but a later `completed` webhook can still be acted on: the invoice is read from `client_transaction_id` and the chain decides |
+| Buyer identity | Not recorded on-chain. The payer's source (wallet or exchange name) and, for wallets, the sending address come from the webhook and are shown off-chain. v2 webhooks carry no refund address (user decision: show what the webhook has) | Same position as the MPP spec: a permissionless `settleDirect()` can't prove who paid |
 
 ---
 
@@ -53,7 +54,7 @@ These Tempo → Ethereum differences matter for Mesh:
 
 | Tempo | Ethereum | Effect on this spec |
 |---|---|---|
-| TIP-20 `transferWithMemo` puts `invoiceRef` on every escrow transfer | ERC-20 has no memo | The forward transfer in `settleDirect()` can't carry `invoiceRef`. Reconciliation instead uses the `SettledDirect` event (`invoiceRef` is its topic 2), plus the `transactionId` we give Mesh (§4.3) |
+| TIP-20 `transferWithMemo` puts `invoiceRef` on every escrow transfer | ERC-20 has no memo | The forward transfer in `settleDirect()` can't carry `invoiceRef`. Reconciliation instead uses the `SettledDirect` event (`invoiceRef` is its topic 2), plus the `clientTransactionId` we give Mesh (§4.3) |
 | Gas paid in a stablecoin, sponsored by the app | Gas paid in ETH, no sponsorship | The settler key needs Sepolia ETH. Buyers who pay from a wallet need ETH for gas |
 | ~0.5 s blocks | ~12 s blocks | The latest block timestamp can be up to ~12 s old, and `settleDirect()` takes one or two blocks to land. Both go into the quote allowance (§4.2) |
 | Tempo Wallet (passkeys) as the primary connector | Injected wallets (MetaMask etc.) | Only the seller needs to connect to our app. The buyer connects inside Mesh Link. The invoice page already reads the chain with no wallet connected |
@@ -67,7 +68,7 @@ These Tempo → Ethereum differences matter for Mesh:
 
 ### 4.1 Responsibilities
 
-1. **Start a payment:** validate the invoice, quote it, and return a Link Token to the frontend.
+1. **Start a payment:** validate the invoice, quote it, create a Mesh payment session, and return its token to the frontend.
 2. **Receive webhooks:** verify each one, and settle the invoice when the funds are confirmed on-chain.
 3. **Report status:** let the frontend poll a payment's progress after Link closes.
 
@@ -75,12 +76,13 @@ It needs these secrets and settings, read once at startup from `.env`:
 
 | Var | Meaning |
 |---|---|
-| `MESH_CLIENT_ID`, `MESH_API_KEY` | Mesh credentials (§6.1: the auth scheme for the sandbox host is still to confirm) |
-| `MESH_API_URL` | Mesh base URL (sandbox) |
-| `MESH_WEBHOOK_SECRET` | Signing secret of the registered webhook URL |
-| `MESH_NETWORK_ID` | Mesh's `networkId` for Sepolia (§6.1) |
-| `MESH_CHAIN_NAME` | The `Chain` string a Sepolia webhook carries (§6.1) |
-| `MESH_TOKENS` | Mesh-supported tokens as `SYMBOL:address`, comma-separated (§6.1) |
+| `MESH_CLIENT_ID` | Mesh client id. Public: it's also returned to the frontend for the Link SDK |
+| `MESH_API_KEY` | Mesh client secret, for OAuth client credentials |
+| `MESH_API_URL` | Mesh API base URL, default `https://api.sbx.meshpay.com`; its host is the OAuth `audience` |
+| `MESH_LINK_ENV` | The Link SDK `environment` returned to the frontend: `sbx` (default) or `prod` |
+| `MESH_WEBHOOK_SECRET` | Signing secret of the registered webhook endpoint |
+| `MESH_NETWORK_CAIP2` | The target network, default `eip155:11155111` (Sepolia) |
+| `MESH_TOKENS` | Mesh-supported tokens as `SYMBOL:address`, comma-separated |
 | `SETTLER_PRIVATE_KEY` | The settler key |
 | `FACTORY_ADDRESS` | `0x58B4…99d4` |
 | `SEPOLIA_RPC_URL` | Sepolia RPC |
@@ -96,9 +98,9 @@ Code carried over from `tempo/mpp-server/src/`: `invoice.ts` (`isClone`: the EIP
 As in MPP spec §4.2, with a longer window:
 
 - **Window start:** the latest block timestamp `t`.
-- **Window length:** **900 s**: the Link Token's 10-minute lifetime plus 5 minutes for the transfer to land on-chain and for `settleDirect()` to be included. Wallet transfers land within a few blocks. Exchange withdrawals can take much longer, and Mesh says exchanges may take "seconds to days" to post. A payment that lands after the window may be short (§7).
+- **Window length:** **900 s**: the quote's own 10-minute life (§4.3 step 7) plus 5 minutes for the transfer to land on-chain and for `settleDirect()` to be included. Wallet transfers land within a few blocks. Exchange withdrawals can take much longer, and Mesh says exchanges may take "seconds to days" to post. A payment that lands after the window may be short (§7). A Mesh session itself lives about an hour; the frontend doesn't open Link once the quote has expired, but a buyer who lingers inside an open Link can still pay late (user decision: keep the 900 s window).
 - **Discount:** the smallest `activeDiscount` value at any instant in the window, found by calling the contract at `t` and at each tier cutoff inside the window (`quoteBps`, unchanged from `mpp-server`).
-- **Amount:** `principal − floor(principal × quoteBps / 10_000)` (`quoteAmount`), converted to display units with `formatUnits(amount, decimals)` for Mesh's `amount`. Mesh takes a JSON number; at 6 decimals and PoC amounts it is exact, and the plan's test checks that the number Mesh is sent converts back to the same base units.
+- **Amount:** `principal − floor(principal × quoteBps / 10_000)` (`quoteAmount`), sent to Mesh as the decimal string `formatUnits(amount, decimals)`, which is exact.
 
 ### 4.3 Endpoints
 
@@ -109,27 +111,32 @@ As in MPP spec §4.2, with a longer window:
 3. The invoice token must be a token Mesh supports on the target network → otherwise `422`.
 4. The clone's balance must be below the amount due now → otherwise `409` saying it is already paid. The invoice then only needs settling, and the frontend offers Finish settlement (port spec §5.3) instead.
 5. Compute the quote (§4.2).
-6. Request a Link Token from Mesh (`POST /api/v1/linktoken`) with:
-   - `transferType: "payment"`, `isInclusiveFeeEnabled: false`
-   - one `toAddresses` entry: the target network's Mesh `networkId`, the token symbol, the clone address, and the quoted `amount`
-   - a `transactionId` of `<invoice address, lowercase>-<session id>`, where the session id is 16 random hex characters (59 characters in all), so webhooks map back to the invoice even after a restart
+6. Create a Mesh payment session: `POST /v2/sessions` with `Authorization: Bearer <token>` and `Idempotency-Key: mesh-session-<session id>`, and:
+   - `transferOptions.type: "TRANSFER_TYPE_PAYMENT"`
+   - one `toAddresses` entry: `networkCaip2` (`MESH_NETWORK_CAIP2`), the token symbol, the clone address, and the quoted `amount` as a decimal string
+   - `transferOptions.clientTransactionId` of `<invoice address, lowercase>-<session id>`, where the session id is 16 random hex characters (59 characters in all), so webhooks map back to the invoice even after a restart
    - a `userId` of `buyer-<session id>`: random per session, so it isn't personal data and doesn't link one buyer's payments
 
-   If the Mesh call fails → `502`.
-7. Record the session (invoice, quote, `transactionId`, expiry = now + 600 s, the Link Token's life) and return `201 { id, linkToken, amount, displayAmount, symbol, discountBps, expiresAt }` to the frontend. `amount` is in base units (a decimal string), `displayAmount` is what Mesh was sent, and `expiresAt` is unix seconds.
+   The bearer token comes from `POST /oauth2/token` (client credentials, HTTP Basic, `audience` = the API host, `scope=sessions:edit`) and is cached until shortly before it expires. If minting the token or creating the session fails → `502`.
+7. Record the session (invoice, quote, `clientTransactionId`, expiry = **the latest block's timestamp + 600 s**: the quote's life, not the Mesh session's) and return `201 { id, linkToken, clientId, linkEnvironment, amount, displayAmount, symbol, discountBps, expiresAt }` to the frontend. `linkToken` is Mesh's single-use session `token`; `clientId` and `linkEnvironment` are what the Link SDK needs; `amount` is in base units (a decimal string), `displayAmount` is what Mesh was sent, and `expiresAt` is unix seconds.
 
 **`POST /webhooks/mesh`** (called by Mesh)
 
-1. Verify the `X-Mesh-Signature-256` HMAC over the raw body. Reject it with `401` if it is missing or doesn't match, and with `400` if it matches but the body isn't JSON.
-2. Return `200` straight away (Mesh's limit is 200 ms) and process the event in the background.
-3. Ignore any event whose `EventId` has already been processed.
-4. Map `TransactionId` to its session (or, if the session was lost, to the invoice it encodes, which must be a clone of the factory's implementation; a session record is then created with no quote). An undecodable `TransactionId` is ignored. On `Succeeded`, check that `DestinationAddress` is that invoice and that `Chain` and `Token` match the expected values (§6.1); otherwise the session needs attention and nothing is settled. (`Pending` and `Failed` events only change the session's state, and may not carry these fields.) A `Succeeded` event for a session that is already `settled` is ignored.
-5. On `Pending`: mark the session pending. On `Succeeded`: record the payer details, then wait up to **180 s** (15 blocks) for the `TxHash` receipt on our RPC. **Whether or not the receipt is found**, read the clone's on-chain token balance: the chain decides. If the invoice is still Active and the balance covers the amount due now, call `settleDirect()` and wait for its receipt. Otherwise, or if `settleDirect()` reverts, record why (decoded custom error). If the invoice is already Paid when checked, record that instead of trying. Settlements for one invoice run one at a time.
-6. On `Failed`: mark the session failed. The buyer can start again.
+1. Verify `X-Mesh-Signature-256`: `sha256=` followed by the hex HMAC-SHA256, under the webhook secret, of `"{X-Mesh-Timestamp}.{raw body}"`; and check that `X-Mesh-Timestamp` (unix seconds) is within **300 s** of now. Reject with `401` if either header is missing or the check fails, and with `400` if it passes but the body isn't a JSON object.
+2. Return `200` straight away (well inside Mesh's 30 s per-attempt timeout) and process the event in the background.
+3. Ignore (still with `200`) an event whose `version` isn't `"1"`, whose `type` doesn't start with `transfer.`, or that has no `data.transfer`; and any event whose `event_id` has already been seen.
+4. Map `data.transfer.client_transaction_id` to its session (or, if the session was lost, to the invoice it encodes, which must be a clone of the factory's implementation; a session record is then created with no quote). An undecodable id is ignored.
+5. Branch on `data.transfer.status`, not `type`:
+   - `pending` or `compliance_hold`: mark the session pending.
+   - `failed` or `refunded`: mark the session failed, with `error_code` (or `error_message`, or the status) as the reason. The buyer can start again.
+   - `completed`: ignored if the session is already `settled`. Otherwise record the payer details (`source.crypto.venue` or `source.kind`, and `source.crypto.address`) and the destination `tx_hash`. Check that `destination.crypto.address` is the invoice, and that `destination.crypto.network_caip2` and `.asset.symbol`, when present, are the expected network and the invoice token's symbol; otherwise the session needs attention and nothing is settled. Then wait up to **180 s** (15 blocks) for the `tx_hash` receipt on our RPC. **Whether or not the receipt is found**, read the clone's on-chain token balance: the chain decides. If the invoice is still Active and the balance covers the amount due now, call `settleDirect()` and wait for its receipt. Otherwise, or if `settleDirect()` reverts, record why (decoded custom error). If the invoice is already Paid when checked, record that instead of trying.
+   - anything else: ignored.
+
+   A non-terminal status never overwrites a terminal one. Events for one invoice are handled one at a time.
 
 **`GET /invoices/:address/mesh-session/:id`** (called by the frontend)
 
-Returns the session's state: `awaiting-transfer`, `pending`, `succeeded`, `settled` (with the `settleDirect` tx hash), `failed`, or `needs-attention` (funds arrived but settling didn't happen, with the reason). It also returns the payer details from the webhook: source provider, source address and refund address. The body is `{ id, invoice, state, amount, discountBps, expiresAt, transferTx?, settleTx?, reason?, payer? }`. An unknown id, or the id of another invoice's session, is `404`.
+Returns the session's state: `awaiting-transfer`, `pending`, `succeeded`, `settled` (with the `settleDirect` tx hash), `failed`, or `needs-attention` (funds arrived but settling didn't happen, with the reason). It also returns the payer details from the webhook: source provider and, for a wallet, source address. The body is `{ id, invoice, state, amount, discountBps, expiresAt, transferTx?, settleTx?, reason?, payer? }`. An unknown id, or the id of another invoice's session, is `404`.
 
 **`GET /invoices/:address/mesh-sessions`** (called by the frontend)
 
@@ -137,25 +144,25 @@ Returns `{ sessions: [...] }`, the invoice's sessions in the same shape, newest 
 
 ### 4.4 Local development
 
-Mesh has to be able to reach the webhook URL over the public internet. In local development that means a tunnel. Mesh allows **one sandbox webhook URL** per account, sends from a fixed IP (`20.22.113.37`), and only renders Link on domains on the dashboard's **Allowed domains** list, which must include the frontend's dev origin.
+Mesh has to be able to reach the webhook URL over the public internet (HTTPS, port 443). In local development that means a tunnel. The endpoint is registered in the dashboard under **Account > Webhooks** and subscribed to `transfer.status_updated` (the catch-all, so every status reaches us). Its signing secret is shown once.
 
 ---
 
 ## 5. Frontend changes
 
-On the existing `ethereum/frontend/`. New `.env` key `VITE_MESH_SERVER_URL`; if it is unset, Pay with Mesh is hidden. New dependency: `@meshconnect/web-link-sdk`. The list of Mesh-supported token addresses lives in the frontend config as data (§6.1).
+On the existing `ethereum/frontend/`. New `.env` key `VITE_MESH_SERVER_URL`; if it is unset, Pay with Mesh is hidden. New dependency: `@meshpayhq/link-web-sdk`. The list of Mesh-supported token addresses lives in the frontend config as data (§6.1).
 
 | Action | Shown when | Behaviour |
 |---|---|---|
-| **Pay with Mesh** | `status == Active`, the token is Mesh-supported, the clone's balance is below the amount due now, and the viewer isn't the seller. **No wallet connection is required** (no account counts as "not the seller") | 1. Call `mesh-session`. 2. Show "Pay **X PYUSD** now (Y% discount) to invoice `INV-…`. Quote valid until hh:mm:ss." 3. On confirm, open Mesh Link with the Link Token. 4. On `onTransferFinished`, show "Payment submitted", then poll the session status until it is settled, failed or needs attention, refetching the invoice and its balance as it changes |
+| **Pay with Mesh** | `status == Active`, the token is Mesh-supported, the clone's balance is below the amount due now, and the viewer isn't the seller. **No wallet connection is required** (no account counts as "not the seller") | 1. Call `mesh-session`. 2. Show "Pay **X PYUSD** now (Y% discount) to invoice `INV-…`. Quote valid until hh:mm:ss." 3. On confirm, open Mesh Link: `openLink(linkToken, clientId, { environment: linkEnvironment, target: { mode: 'modal' } })`. 4. On `onExit` (Link closed, paid or not), poll the session status until it is settled, failed or needs attention, refetching the invoice and its balance as it changes. A session still `awaiting-transfer` after its quote expires counts as abandoned. `onError` (Link didn't start) shows the error |
 | **Finish settlement** | As port spec §5.3 | Unchanged. It's the fallback if mesh-server didn't settle. It still needs a connected wallet with Sepolia ETH |
 | **Accept and settle** | As port spec §5.3 | Unchanged. It's the seller's fallback for a short payment (§7) |
 
 The rule goes in `visibleActions` (`src/lib/actions.ts`) as a new `payWithMesh` flag, with the Mesh-supported check passed in as part of the context. That changes the frozen `src/lib/` interface (§3). Today every flag there is false when no account is connected; `payWithMesh` is the first exception.
 
-The Link SDK callbacks drive the UI only. A payment counts as done when the session reaches `settled`, or when the invoice status reads Paid on-chain.
+The Link SDK callbacks drive the UI only; v2 has no success callback. A payment counts as done when the session reaches `settled`, or when the invoice status reads Paid on-chain.
 
-Invoice history already shows the inbound transfer into the clone and the `SettledDirect` event (port spec §5.4). For an exchange payment the sender shown there is the exchange's hot wallet, not the buyer (explainer §7). The new part is a "Paid via Mesh" line with the payer details (source provider, refund address) from the invoice's latest session in `GET /invoices/:address/mesh-sessions`, while mesh-server still holds it.
+Invoice history already shows the inbound transfer into the clone and the `SettledDirect` event (port spec §5.4). For an exchange payment the sender shown there is the exchange's hot wallet, not the buyer (explainer §7). The new part is a "Paid via Mesh" line with the payer details (source provider and, for a wallet, sender address) from the invoice's latest session in `GET /invoices/:address/mesh-sessions`, while mesh-server still holds it.
 
 ---
 
@@ -164,43 +171,31 @@ Invoice history already shows the inbound transfer into the clone and the `Settl
 ### 6.1 Before building
 
 - A **Mesh dashboard account**. It's invite-only, through a Mesh representative.
-- A **sandbox API key** with Read & Write permissions, an Allowed-domains entry for the dev origin (`http://localhost:5173`), and a registered sandbox webhook URL (the tunnel, §4.4).
-- Confirm that the **PYUSD and USDG token contracts Mesh uses on Sepolia** are the ones in the port's token list (PYUSD `0xCaC524BcA292aaade2DF8A05cC58F0a65B1B3bB9`, USDG `0xfBb2A78CceEb415b00300925e464C3E44E6e06b0`, both 6 decimals). This is open item 1d in [`verification-notes.md`](verification-notes.md). If Mesh uses other contracts, the frontend's token list changes (data only); invoices created with the current ones can't be paid through Mesh.
-- The Mesh **`networkId` for Sepolia**, from `GET /api/v1/transfers/managed/networks`, and the token symbols Mesh expects in `toAddresses`.
-- The **`Chain` and `Token` values** a Sepolia webhook carries (the explainer's example shows mainnet's `"Ethereum"`), so step 4 of the webhook handler compares against the right strings. Read from the first sandbox webhook.
+- **Sandbox API keys** (the API keys page's Sandbox toggle): client id and secret.
+- A **webhook endpoint** registered under **Account > Webhooks** (the tunnel, §4.4), subscribed to `transfer.status_updated`, with its signing secret.
 
-These go in the first node of the plan, as the port's S1 did, with results added to `verification-notes.md`.
-
-**Status (2026-11-03): blocked on authentication.** The dashboard issued `mk_live_…` keys for `api.sbx.meshpay.com` (sandbox) and `api.meshpay.com` (production), not the `integration-api.meshconnect.com` hosts and `sk_sandbox_…` keys these docs describe. Every call returns `401 "provide a valid Bearer token"`, with `X-Client-Id`/`X-Client-Secret` headers and with the key as a Bearer token. Mesh has been asked how to authenticate and whether the docs at docs.meshconnect.com still apply. Until it answers, the build uses these fallbacks from the docs, each confirmed or corrected before integration:
-
-| Item | Fallback |
-|---|---|
-| Auth | `X-Client-Id` / `X-Client-Secret` headers on every call |
-| Link Token response | `{ content: { linkToken } }` |
-| `X-Mesh-Signature-256` | Base64 HMAC-SHA256 of the raw body, no prefix |
-| Token contracts | The port's PYUSD and USDG addresses. Mesh's [supported tokens page](https://docs.meshconnect.com/resources/supported-tokens) also lists **USDC** for MetaMask on Sepolia; to confirm |
-| `networkId`, `Chain` string | Config values, left empty until confirmed |
+The spike (plan node S1) resolved the rest; see [`verification-notes.md`](verification-notes.md), Mesh pay-now spike. In short: auth is OAuth client credentials and works with the sandbox keys; the network is `eip155:11155111` and the symbols are `PYUSD`/`USDG`; the session, webhook and signature formats are as in §4.3. **Open:** whether Link offers an ERC-20 (PYUSD/USDG) wallet transfer on Sepolia (§6.2), and whether the destination receives the full `amount` (§2, Fees).
 
 ### 6.2 What the sandbox can and can't prove
 
-- **Wallet flows** (MetaMask or Rainbow on Sepolia) make **real on-chain testnet transfers**. They are the only way to test the whole path, from Link to the webhook to `settleDirect()` to Paid.
-- **Exchange flows** (the simulated Coinbase and Binance test accounts) move **no real assets**. They test the Link UX and webhook handling. The on-chain check (§4.3 step 5) should then refuse to settle, and that refusal is itself a useful test.
-- The `Pending` webhook isn't guaranteed in sandbox, so no logic may depend on it.
+- **Wallet flows** (MetaMask, Phantom or Rainbow on Sepolia) make **real on-chain testnet transfers**. They are the only way to test the whole path, from Link to the webhook to `settleDirect()` to Paid. Mesh's sandbox docs list Sepolia with its **native token (ETH) only**. If Link offers no PYUSD/USDG transfer, the whole path can't be shown in the sandbox until Mesh enables it; the settle path is then tested with a sandbox exchange payment plus a plain PYUSD transfer into the clone (plan I2).
+- **Exchange flows** (mock exchanges such as `mock_coinbase`) move **no real assets**, and their webhooks carry synthesized data. They test the Link UX and webhook handling. The on-chain check (§4.3 step 5) should then refuse to settle, and that refusal is itself a useful test.
+- No logic depends on a `pending` webhook arriving.
 
 ### 6.3 Tests
 
 - **Contracts:** none. The `settleDirect` tests from the port's suite cover the contract side.
-- **Server unit tests** (vitest, against a fake chain as in `mpp-server`): the quote window (including tier cutoffs and the due date) with the new window length; the display-units conversion round-trip; clone validation; the `mesh-session` error codes (§4.3); the Link Token request body (with Mesh's API mocked); HMAC verification against the raw body; deduplication by `EventId`; a `Succeeded` event with an insufficient balance not settling; a mismatched `DestinationAddress`; a webhook for an already-Paid invoice; a webhook whose session is unknown.
+- **Server unit tests** (vitest, against a fake chain as in `mpp-server`): the quote window (including tier cutoffs and the due date) with the new window length; clone validation; the `mesh-session` error codes (§4.3); the OAuth token request and its caching, and the session request body and headers (with Mesh's API mocked); the timestamped HMAC against the raw body, including Mesh's test vector and a stale timestamp; deduplication by `event_id`; ignored versions and types; a `completed` event with an insufficient balance not settling; a mismatched destination; a webhook for an already-Paid invoice; a webhook whose session is unknown.
 - **Frontend unit tests:** the `payWithMesh` flag in `visibleActions`, including with no account connected and for a USDC invoice.
-- **End-to-end (manual, Sepolia):** a new section in [`../e2e-checklist.md`](../e2e-checklist.md). Create a PYUSD invoice, then pay it through Mesh Link from MetaMask on Sepolia, with no wallet connected to our app. Confirm the transfer into the clone, the `Succeeded` webhook, the `settleDirect` transaction, the payout, the Paid status and the history entry. Then a sandbox exchange payment (no real transfer), which must end in `needs-attention` with the invoice still Active.
+- **End-to-end (manual, Sepolia):** a new section in [`../e2e-checklist.md`](../e2e-checklist.md). Create a PYUSD invoice, then pay it through Mesh Link from MetaMask on Sepolia, with no wallet connected to our app. Confirm the transfer into the clone (and whether it is the full amount), the `transfer.completed` webhook, the `settleDirect` transaction, the payout, the Paid status and the history entry. Then a sandbox exchange payment (no real transfer), which must end in `needs-attention` with the invoice still Active.
 
 ---
 
 ## 7. Risks (documented, not handled in code)
 
 - **Late arrival and a short payment:** if an exchange posts the transfer after the quote window and a tier cutoff has passed, the amount due goes up, and `settleDirect()` reverts for anyone except the seller. The seller can use Accept and settle. mesh-server reports `needs-attention`.
-- **Payment into a non-Active clone:** this happens on a race with `fund`, on a second Mesh payment, or when the seller cancels while a transfer is in flight. The funds stay in the clone, and there's no rescue path (port spec §3.9, stray transfers). Mesh returns a `RefundAddress` that a future rescue feature could use.
-- **Manual (QR) deposits** let the buyer send any amount from any wallet. An underpayment is handled as above. An overpayment goes to the seller, because `settleDirect()` forwards the whole balance.
+- **Payment into a non-Active clone:** this happens on a race with `fund`, on a second Mesh payment, or when the seller cancels while a transfer is in flight. The funds stay in the clone, and there's no rescue path (port spec §3.9, stray transfers). v2 webhooks carry no refund address, so a future rescue feature would need the sender from the transfer record.
+- **Manual (send-to-address) deposits** let the buyer send any amount from any wallet. An underpayment is handled as above. An overpayment goes to the seller, because `settleDirect()` forwards the whole balance.
 - **Server trust:** mesh-server can't redirect funds, because the destination is the verified clone. It can fail to settle, but anyone can call `settleDirect()`.
 - **Mesh as a dependency:** if Mesh is down or the webhook is lost, the funds still reach the clone, and Finish settlement covers the gap.
 - **Token issuer controls:** a pause, or a frozen clone or payout address, blocks the inbound transfer or `settleDirect()` (port spec §3.9).
@@ -213,6 +208,6 @@ These go in the first node of the plan, as the port's S1 did, with results added
 - **Cross-chain bridging** (for example USDC on Solana → Ethereum). Mesh bridges into Ethereum, but only on mainnet, and headless bridging has to be enabled per client.
 - Mainnet and production Mesh keys.
 - Escrow funding (the Funded state) through Mesh.
-- Mesh Managed Tokens (return-user one-tap), Paylinks, onramp (buying crypto with fiat), and the mobile SDKs.
-- Recording the payer on-chain, and refunds through Mesh's `RefundAddress`.
+- Pay links, fiat ramps, wallet verification, and mobile SDKs (not live in v2).
+- Recording the payer on-chain, and refunds.
 - Contract changes, and persisting sessions across mesh-server restarts.

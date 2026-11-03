@@ -1,9 +1,12 @@
 // INTERFACE FREEZE (tag ethereum-mesh-server-interface-v1): exported names, signatures and documented behaviour.
-import type { Address } from 'viem';
+import { randomBytes } from 'node:crypto';
+import { getAddress, type Address } from 'viem';
+
+const TRANSACTION_ID = /^(0x[0-9a-fA-F]{40})-([0-9a-fA-F]{16})$/;
 
 /** A new session id: 16 random lowercase hex characters (from `node:crypto`). */
 export function newSessionId(): string {
-  throw new Error('unimplemented');
+  return randomBytes(8).toString('hex');
 }
 
 /**
@@ -11,7 +14,7 @@ export function newSessionId(): string {
  * `invoice` may be in any case; the output is always lowercase.
  */
 export function encodeTransactionId(invoice: Address, id: string): string {
-  throw new Error('unimplemented');
+  return `${invoice}-${id}`.toLowerCase();
 }
 
 /**
@@ -20,5 +23,6 @@ export function encodeTransactionId(invoice: Address, id: string): string {
  * characters, non-hex) → `undefined`.
  */
 export function decodeTransactionId(transactionId: string): { invoice: Address; id: string } | undefined {
-  throw new Error('unimplemented');
+  const match = TRANSACTION_ID.exec(transactionId);
+  return match ? { invoice: getAddress(match[1].toLowerCase()), id: match[2].toLowerCase() } : undefined;
 }

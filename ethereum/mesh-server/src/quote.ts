@@ -1,4 +1,5 @@
 // INTERFACE FREEZE (tag ethereum-mesh-server-interface-v1): exported names, signatures and documented behaviour.
+import { formatUnits, parseUnits } from 'viem';
 
 /** Link Token life (600 s) plus 300 s for the transfer to land and `settleDirect()` to be included (Mesh spec §4.2). */
 export const QUOTE_WINDOW = 900n;
@@ -16,12 +17,14 @@ export async function quoteBps(
   discountAt: (timestamp: bigint) => Promise<number>,
   window: bigint = QUOTE_WINDOW,
 ): Promise<number> {
-  throw new Error('unimplemented');
+  const candidates = [t, ...cutoffs.filter((c) => c > t && c <= t + window)];
+  const discounts = await Promise.all(candidates.map(discountAt));
+  return Math.min(...discounts);
 }
 
 /** `principal - floor(principal * bps / 10_000)`, the same rounding as `settleDirect()`. 0 bps → principal; 10_000 bps → 0. */
 export function quoteAmount(principal: bigint, bps: number): bigint {
-  throw new Error('unimplemented');
+  return principal - (principal * BigInt(bps)) / 10_000n;
 }
 
 /**
@@ -30,5 +33,7 @@ export function quoteAmount(principal: bigint, bps: number): bigint {
  * (`parseUnits(String(n), decimals) !== amount`), e.g. an 18-decimal amount with more digits than a double holds.
  */
 export function toMeshAmount(amount: bigint, decimals: number): number {
-  throw new Error('unimplemented');
+  const n = Number(formatUnits(amount, decimals));
+  if (parseUnits(String(n), decimals) !== amount) throw new Error(`${amount} base units at ${decimals} decimals isn't exact as a JSON number`);
+  return n;
 }

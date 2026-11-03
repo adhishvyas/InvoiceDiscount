@@ -1,5 +1,5 @@
 // INTERFACE FREEZE (tag ethereum-mesh-server-interface-v1): exported names, signatures and documented behaviour.
-import type { Address, Hash } from 'viem';
+import { getAddress, type Address, type Hash } from 'viem';
 
 /**
  * - `awaiting-transfer`: created, no webhook yet.
@@ -55,34 +55,53 @@ export interface SessionView {
 
 /** In-memory sessions, one process (Mesh spec §2: a restart loses them). */
 export class SessionStore {
+  // Map iteration follows insertion order, which forInvoice reverses for most recent first.
+  private readonly byId = new Map<string, Session>();
+  private readonly byTxId = new Map<string, Session>();
+
   /**
    * Adds a session in state `awaiting-transfer` and returns it. `invoice` is stored checksummed.
    * Throws if `id` or `transactionId` is already present.
    */
   create(init: Omit<Session, 'state'>): Session {
-    throw new Error('unimplemented');
+    if (this.byId.has(init.id)) throw new Error(`session ${init.id} already exists`);
+    if (this.byTxId.has(init.transactionId)) throw new Error(`transactionId ${init.transactionId} already exists`);
+    const session: Session = { ...init, invoice: getAddress(init.invoice), state: 'awaiting-transfer' };
+    this.byId.set(session.id, session);
+    this.byTxId.set(session.transactionId, session);
+    return session;
   }
 
   get(id: string): Session | undefined {
-    throw new Error('unimplemented');
+    return this.byId.get(id);
   }
 
   byTransactionId(transactionId: string): Session | undefined {
-    throw new Error('unimplemented');
+    return this.byTxId.get(transactionId);
   }
 
   /** The invoice's sessions (address in any case), most recently created first; `[]` if none. */
   forInvoice(invoice: Address): Session[] {
-    throw new Error('unimplemented');
+    const key = invoice.toLowerCase();
+    return [...this.byId.values()].filter((s) => s.invoice.toLowerCase() === key).reverse();
   }
 
   /** Merges `patch` into the session and returns it. `id`, `invoice` and `transactionId` can't change. Throws for an unknown id. */
   update(id: string, patch: Partial<Omit<Session, 'id' | 'invoice' | 'transactionId'>>): Session {
-    throw new Error('unimplemented');
+    const session = this.byId.get(id);
+    if (!session) throw new Error(`unknown session ${id}`);
+    const { id: _id, invoice: _invoice, transactionId: _txId, ...rest } = patch as Partial<Session>;
+    Object.assign(session, rest);
+    return session;
   }
 }
 
 /** `Session` → `SessionView`: `amount` as a decimal string, `expiresAt` as a number, `transactionId` dropped. */
 export function sessionView(s: Session): SessionView {
-  throw new Error('unimplemented');
+  const view: SessionView = { id: s.id, invoice: s.invoice, state: s.state, amount: s.amount.toString(), discountBps: s.discountBps, expiresAt: Number(s.expiresAt) };
+  if (s.transferTx !== undefined) view.transferTx = s.transferTx;
+  if (s.settleTx !== undefined) view.settleTx = s.settleTx;
+  if (s.reason !== undefined) view.reason = s.reason;
+  if (s.payer !== undefined) view.payer = s.payer;
+  return view;
 }

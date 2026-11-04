@@ -6,7 +6,7 @@ import {InvoiceEscrow, DiscountTier} from "./InvoiceEscrow.sol";
 
 /// @title InvoiceFactory
 /// @notice Deploys and initialises one EIP-1167 clone of `InvoiceEscrow` per invoice.
-/// @dev INTERFACE FREEZE (tag `ethereum-interface-v1`): signatures, events and NatSpec behaviour are final.
+/// @dev INTERFACE FREEZE (tag `ethereum-interface-v2`): signatures, events and NatSpec behaviour are final.
 contract InvoiceFactory {
     /// @notice The `InvoiceEscrow` implementation that every invoice clones.
     address public immutable implementation;
@@ -37,7 +37,7 @@ contract InvoiceFactory {
     ///      `TierAfterDueDate`, `DiscountTooLarge`, `InvalidToken`); the whole transaction reverts, so no clone
     ///      remains. The factory does not enforce unique references and has no token allowlist.
     /// @param invoiceRef 32-byte UTF-8 reference, must be non-zero.
-    /// @param token An ERC-20 token contract (must have code).
+    /// @param token An ERC-20 token contract (must have code), or `address(0)` for a native-ETH invoice.
     /// @param principal Amount in token base units; must be non-zero.
     /// @param dueDate Unix timestamp in the future.
     /// @param tiers Up to 10 discount tiers with strictly ascending cutoffs, none after `dueDate`.
@@ -52,7 +52,7 @@ contract InvoiceFactory {
         address payoutAddress
     ) external returns (address invoice) {
         invoice = Clones.clone(implementation);
-        InvoiceEscrow(invoice).initialize(msg.sender, invoiceRef, token, principal, dueDate, tiers, payoutAddress);
+        InvoiceEscrow(payable(invoice)).initialize(msg.sender, invoiceRef, token, principal, dueDate, tiers, payoutAddress);
         emit InvoiceCreated(invoice, msg.sender, invoiceRef, token, principal, dueDate);
     }
 }

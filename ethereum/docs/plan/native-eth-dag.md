@@ -68,6 +68,8 @@ flowchart TD
 
 **Verify:** the user approves `native-eth-spec.md`.
 
+**Status:** done 2026-11-03.
+
 ### C1 — Contract interface v2 freeze (main session)
 
 On a branch from `ethereum-interface-v1` (stubs), with `ethereum/docs` brought over:
@@ -79,11 +81,15 @@ On a branch from `ethereum-interface-v1` (stubs), with `ethereum/docs` brought o
 
 **Verify:** `forge build`; the ABI diff against v1 shows exactly ETH spec §3.9.
 
+**Status:** done 2026-11-03, tag `ethereum-interface-v2` (branch `ethereum-eth-contract-freeze`, from `ethereum-interface-v1`, with the current tests and docs). The ABI diff is exactly §3.9; the factory ABI is unchanged. One addition, ETH spec §3.8a: the implementation's constructor sets status Cancelled. Because the escrow now has `receive()`, Solidity requires `InvoiceEscrow(payable(addr))` casts: 16 sites in the existing tests need that mechanical change (agent A).
+
 ### C2 — Contract implementation (main session)
 
 Merge the tag into the implementation branch and fill in the bodies: `_send` in assembly (call with gas cap, `value`, out size 0); `withdraw` effects before the call; `receive` checks; `settleDirect` and `cancel` via `_send` for ETH. The ERC-20 paths stay byte-for-byte equivalent in behaviour.
 
 **Verify:** `forge build`; ABI identical to the tag (plus library errors, as in the port's C2 note). No tests here.
+
+**Status:** done 2026-11-03. `_pay(to, amount)` dispatches to `safeTransfer` (ERC-20, so those paths are unchanged) or `_send` (ETH: assembly `call(PUSH_GAS, to, amount, 0, 0, 0, 0)`, credit plus `PayoutDeferred` on failure). `withdraw` uses an assembly call with all gas and no return-data copy. ABI identical to the tag apart from the library errors and `getInvoice`'s unnamed return, as at the port's C2. ABIs synced to the frontend and mesh-server. The existing tests don't compile until M1 (the `payable` casts, agent A).
 
 ### T1 — Contract tests, red (Sonnet agent A)
 

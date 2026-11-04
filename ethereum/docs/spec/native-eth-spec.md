@@ -1,6 +1,6 @@
 # InvoiceDiscount on Ethereum: Native ETH Invoices
 
-> Status: draft, 2026-11-03. Extends the port ([`invoice-discount-spec.md`](invoice-discount-spec.md), the "port spec") and Pay with Mesh ([`mesh-pay-now-spec.md`](mesh-pay-now-spec.md), the "Mesh spec"). Plan: [`../plan/native-eth-dag.md`](../plan/native-eth-dag.md). Design choices marked *(user)* were made by the user on 2026-11-03.
+> Status: approved 2026-11-03; interface frozen at tag `ethereum-interface-v2`. Extends the port ([`invoice-discount-spec.md`](invoice-discount-spec.md), the "port spec") and Pay with Mesh ([`mesh-pay-now-spec.md`](mesh-pay-now-spec.md), the "Mesh spec"). Plan: [`../plan/native-eth-dag.md`](../plan/native-eth-dag.md). Design choices marked *(user)* were made by the user on 2026-11-03.
 
 ---
 
@@ -85,6 +85,10 @@ Unchanged, except that for an ETH invoice the transfers go through `_send`.
 
 - `owed(address account) external view returns (uint256)`.
 - Storage: one new slot (8) for the `owed` mapping. The NatSpec layout comment is updated, and the "must not use more fresh slots" rule moves to the v2 layout.
+
+### 3.8a The implementation contract
+
+The implementation's own storage has `token == address(0)` and status Active, so without a guard it would look like an Active ETH invoice (its `fund` would succeed with `msg.value == 0`, and `receive()` would accept ETH). Its constructor therefore also sets **status `Cancelled`**: `fund`, `receive()`, `triggerPayment` and `settleDirect` on it revert with their status errors. Clones are unaffected (their storage is their own). *(Added at the C1 freeze.)*
 
 ### 3.9 Summary of ABI changes (`ethereum-interface-v1` → `-v2`)
 

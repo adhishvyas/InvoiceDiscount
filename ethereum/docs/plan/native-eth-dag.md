@@ -124,11 +124,15 @@ On a branch from `ethereum-frontend-interface-v2` stubs plus the v3 type changes
 
 Stubs and TSDoc; tag `ethereum-frontend-interface-v4`; then launch agent B.
 
+**Status:** done 2026-11-03 in the main session, tag `ethereum-frontend-interface-v4` (branch `ethereum-eth-frontend-freeze`, from `-v3`, with the current docs, ABI, hooks and pages). Stubs: `isNative`, `fundPath(atomicStatus, token)`, `visibleActions`, `buildHistory`, `fetchInvoiceHistory`. `InvoiceHistory` gains `deferred` and `withdrawals`, and `inbound` also takes `Received`. ETH is added to `TOKENS` (last, so PYUSD stays the default) and to `MESH_TOKENS`.
+
 ### F2 — Frontend lib + pages (frontend agent)
 
 Lib bodies, `useFund` (native path), `useInvoiceWrite` for withdraw, `CreateInvoice` (ETH without `decimals()`), `InvoiceDetail` (`getBalance`, ETH amounts, Withdraw), and the history rows.
 
 **Verify:** build and lint (test files may lag until M2).
+
+**Status:** done 2026-11-03 in the main session. Build and lint pass. `useFund(token)` sends one `fund{value}` on the native path, and `Call` gains `value`. `CreateInvoice` skips `decimals()` for ETH. `InvoiceDetail` reads ETH via `useBalance` plus `owed(account)`, has a Withdraw section and timeline rows for inbound `Received`, credits and withdrawals; inbound rows now show before settlement too, which for ERC-20 changes nothing, since `Transfer`s are only read after it. The old tests lag until M2 (24 fail on the new `withdraw` flag and token list).
 
 ### U1 — Frontend tests, red (Sonnet agent B)
 

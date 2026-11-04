@@ -4,6 +4,7 @@ import { erc20Abi, parseEventLogs, zeroAddress, type Address } from 'viem';
 import { useAccount, usePublicClient, useReadContract } from 'wagmi';
 import { invoiceFactoryAbi } from '../abi/InvoiceFactory';
 import { DEFAULT_TOKEN, EXPLORER_URL, FACTORY_ADDRESS, FACTORY_DEPLOY_BLOCK, TOKENS } from '../config';
+import { isNative, NATIVE_DECIMALS } from '../lib/tokens';
 import { useInvoiceWrite } from '../hooks/useInvoiceWrite';
 import { findExistingInvoice } from '../lib/logs';
 import { REF_MAX_BYTES, encodeRef, refByteLength } from '../lib/ref';
@@ -60,7 +61,10 @@ export default function CreateInvoice() {
   }, []);
 
   // Amounts use the token's own decimals; nothing can be submitted until they are read.
-  const { data: tokenDecimals } = useReadContract({ address: token, abi: erc20Abi, functionName: 'decimals' });
+  // ETH has no decimals() (native-ETH spec §4).
+  const native = isNative(token);
+  const { data: erc20Decimals } = useReadContract({ address: token, abi: erc20Abi, functionName: 'decimals', query: { enabled: !native } });
+  const tokenDecimals = native ? NATIVE_DECIMALS : erc20Decimals;
   const decimals = tokenDecimals ?? 0;
 
   // A single untouched row means the seller chose no discounts; any edited row is validated as usual.

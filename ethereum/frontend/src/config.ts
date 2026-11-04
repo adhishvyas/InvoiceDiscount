@@ -1,6 +1,7 @@
 import { sepolia } from 'viem/chains';
 import { createConfig, http } from 'wagmi';
 import { injected } from 'wagmi/connectors';
+import { NATIVE_TOKEN } from './lib/tokens';
 
 /** Sepolia Etherscan; links are `${EXPLORER_URL}/tx/<hash>` and `${EXPLORER_URL}/address/<address>`. */
 export const EXPLORER_URL = 'https://sepolia.etherscan.io';
@@ -30,11 +31,15 @@ export interface TokenInfo {
   address: `0x${string}`;
 }
 
-/** Sepolia test stablecoins (verification notes items 1a–1c); all use 6 decimals, but callers should still read `decimals()`. */
+/**
+ * Sepolia test stablecoins (verification notes items 1a–1c), which all use 6 decimals, but callers should still read
+ * `decimals()`; and native ETH (`NATIVE_TOKEN`, 18 decimals, never `decimals()`: native-ETH spec §4).
+ */
 export const TOKENS: readonly TokenInfo[] = [
   { symbol: 'PYUSD', address: '0xCaC524BcA292aaade2DF8A05cC58F0a65B1B3bB9' },
   { symbol: 'USDC', address: '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238' },
   { symbol: 'USDG', address: '0xfBb2A78CceEb415b00300925e464C3E44E6e06b0' },
+  { symbol: 'ETH', address: NATIVE_TOKEN },
 ];
 
 /** PYUSD, preselected in the create form. */
@@ -50,8 +55,9 @@ export const FACTORY_DEPLOY_BLOCK = import.meta.env.VITE_FACTORY_DEPLOY_BLOCK
 /** `VITE_MESH_SERVER_URL`, mesh-server's origin; undefined when unset, which hides Pay with Mesh. */
 export const MESH_SERVER_URL = (import.meta.env.VITE_MESH_SERVER_URL || undefined) as string | undefined;
 
-/** The tokens Pay with Mesh is offered for (Mesh spec §6.1): PYUSD and USDG, same addresses as in `TOKENS`. */
+/** The tokens Pay with Mesh is offered for (Mesh spec §6.1; native-ETH spec §2): PYUSD, USDG and ETH, same addresses as in `TOKENS`. */
 export const MESH_TOKENS: readonly TokenInfo[] = [
   { symbol: 'PYUSD', address: '0xCaC524BcA292aaade2DF8A05cC58F0a65B1B3bB9' },
   { symbol: 'USDG', address: '0xfBb2A78CceEb415b00300925e464C3E44E6e06b0' },
+  { symbol: 'ETH', address: NATIVE_TOKEN },
 ];

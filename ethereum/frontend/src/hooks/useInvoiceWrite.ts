@@ -10,6 +10,8 @@ export interface Call {
   abi: Abi;
   functionName: string;
   args?: readonly unknown[];
+  /** Wei sent with the call (native-ETH `fund`). */
+  value?: bigint;
 }
 
 export type WriteState =

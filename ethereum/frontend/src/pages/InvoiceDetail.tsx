@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { erc20Abi, isAddress, zeroAddress, type Address } from 'viem';
-import { useAccount, useReadContract, useReadContracts } from 'wagmi';
+import { useAccount, useBalance, useReadContract, useReadContracts } from 'wagmi';
 import { invoiceEscrowAbi } from '../abi/InvoiceEscrow';
 import { EXPLORER_URL, MESH_SERVER_URL, MESH_TOKENS } from '../config';
 import { useFund } from '../hooks/useFund';
@@ -15,6 +15,7 @@ import type { SessionView } from '../lib/meshSession';
 import { decodeRef } from '../lib/ref';
 import { computeSplit } from '../lib/split';
 import { STATUS_LABEL, Status, type StatusValue } from '../lib/status';
+import { isNative, NATIVE_DECIMALS } from '../lib/tokens';
 import { fromUnits } from '../lib/units';
 
 const short = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`;
@@ -117,17 +118,17 @@ function Timeline({
   account?: Address;
   money: (units: bigint) => string;
 }) {
-  const { created, funded, paid, cancelled, settledDirect, inbound } = history;
+  const { created, funded, paid, cancelled, settledDirect, inbound, deferred, withdrawals } = history;
   const open = status === Status.Active || status === Status.Funded;
   return (
     <ul>
       <TimelineRow label="Created" at={created?.timestamp} tx={created?.tx} actor={created?.seller} account={account} />
       {(funded || open) && <TimelineRow label="Funded" at={funded?.timestamp} tx={funded?.tx} actor={funded?.buyer} account={account} />}
+      {inbound?.map((t) => (
+        <TimelineRow key={t.tx} label={`Paid ${money(t.amount)} directly`} at={t.timestamp} tx={t.tx} actor={t.from} account={account} />
+      ))}
       {settledDirect ? (
         <>
-          {inbound?.map((t) => (
-            <TimelineRow key={t.tx} label={`Paid ${money(t.amount)} directly`} at={t.timestamp} tx={t.tx} actor={t.from} account={account} />
-          ))}
           <TimelineRow
             label="Settled directly"
             at={settledDirect.timestamp}
@@ -148,6 +149,27 @@ function Timeline({
           actorFirst
         />
       )}
+      {deferred?.map((d, i) => (
+        <TimelineRow
+          key={`deferred-${d.tx}-${i}`}
+          label={`${money(d.amount)} held for withdrawal (couldn’t be sent)`}
+          at={d.timestamp}
+          tx={d.tx}
+          actor={d.to}
+          account={account}
+          actorFirst
+        />
+      ))}
+      {withdrawals?.map((w, i) => (
+        <TimelineRow
+          key={`withdrawn-${w.tx}-${i}`}
+          label={`Withdrew ${money(w.amount)}`}
+          at={w.timestamp}
+          tx={w.tx}
+          actor={w.account}
+          account={account}
+        />
+      ))}
     </ul>
   );
 }
@@ -331,20 +353,37 @@ function Invoice({ invoice }: { invoice: Address }) {
 
   const { data: inv, error, refetch } = useReadContract({ address: invoice, abi: invoiceEscrowAbi, functionName: 'getInvoice' });
   const token = inv?.token;
-  const { data: meta } = useReadContracts({
+  const native = token !== undefined && isNative(token);
+  const erc20 = token !== undefined && !native;
+  const { data: erc20Meta } = useReadContracts({
     allowFailure: false,
     contracts: [
       { address: token ?? zeroAddress, abi: erc20Abi, functionName: 'symbol' },
       { address: token ?? zeroAddress, abi: erc20Abi, functionName: 'decimals' },
     ] as const,
-    query: { enabled: Boolean(token) },
+    query: { enabled: erc20 },
   });
-  const { data: cloneBalance, refetch: refetchBalance } = useReadContract({
+  // ETH has no symbol() or decimals() (native-ETH spec §4).
+  const meta = native ? (['ETH', NATIVE_DECIMALS] as const) : erc20Meta;
+  const { data: tokenBalance, refetch: refetchTokenBalance } = useReadContract({
     address: token ?? zeroAddress,
     abi: erc20Abi,
     functionName: 'balanceOf',
     args: [invoice],
-    query: { enabled: Boolean(token) },
+    query: { enabled: erc20 },
+  });
+  const { data: ethBalance, refetch: refetchEthBalance } = useBalance({ address: invoice, query: { enabled: native } });
+  const cloneBalance = native ? ethBalance?.value : tokenBalance;
+  const refetchBalance = () => {
+    if (native) void refetchEthBalance();
+    else void refetchTokenBalance();
+  };
+  const { data: owed, refetch: refetchOwed } = useReadContract({
+    address: invoice,
+    abi: invoiceEscrowAbi,
+    functionName: 'owed',
+    args: [account ?? zeroAddress],
+    query: { enabled: account !== undefined },
   });
   const { data: bps } = useReadContract({
     address: invoice,
@@ -355,7 +394,7 @@ function Invoice({ invoice }: { invoice: Address }) {
 
   const { data: history, isError: historyError, refetch: refetchHistory } = useInvoiceHistory(invoice, inv?.token, inv?.status ?? -1);
 
-  const { state: fundState, fund, reset: resetFund, path: fundPath } = useFund();
+  const { state: fundState, fund, reset: resetFund, path: fundPath } = useFund(token);
   const { state: txState, run, reset: resetTx, wrongChain } = useInvoiceWrite();
   const [confirmAccept, setConfirmAccept] = useState(false);
 
@@ -388,6 +427,7 @@ function Invoice({ invoice }: { invoice: Address }) {
     cloneBalance: balance,
     dueNow: split.toSeller,
     meshSupported,
+    owed: account === undefined ? 0n : (owed ?? 0n),
   });
   const activeTier = inv.tiers.findIndex((t) => BigInt(now) < t.cutoff);
   const nextCutoff = upcomingCutoff(inv.tiers, BigInt(now));
@@ -406,7 +446,13 @@ function Invoice({ invoice }: { invoice: Address }) {
     if (receipts) {
       refetch();
       refetchBalance();
+      void refetchOwed();
     }
+  };
+  const onWithdraw = async () => {
+    if (!account) return;
+    const receipts = await run([{ address: invoice, abi: invoiceEscrowAbi, functionName: 'withdraw', args: [account] }]);
+    if (receipts) void refetchOwed();
   };
 
   const payoutLine = `${money(split.toSeller)} to ${short(inv.payoutAddress)}`;
@@ -619,6 +665,24 @@ function Invoice({ invoice }: { invoice: Address }) {
         </section>
       )}
 
+      {actions.withdraw && (
+        <section className="bg-slate-900 border border-slate-800 rounded-xl p-5">
+          <h2 className="font-semibold mb-1">Withdraw</h2>
+          <p className="text-sm text-slate-400">
+            You have {money(owed ?? 0n)} to withdraw from this invoice. A payment to your address couldn’t be sent, so it
+            was held here for you.
+          </p>
+          <button
+            onClick={() => { resetTx(); void onWithdraw(); }}
+            disabled={wrongChain || txState.status === 'pending'}
+            className="mt-3 bg-indigo-600 hover:bg-indigo-500 px-5 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50"
+          >
+            Withdraw to {account ? short(account) : 'your wallet'}
+          </button>
+          <WriteStatus state={txState} />
+        </section>
+      )}
+
       {(actions.fund || actions.trigger || actions.cancel) && (
         <section className="space-y-6">
           {actions.fund && (
@@ -637,9 +701,11 @@ function Invoice({ invoice }: { invoice: Address }) {
                 refunded to {refundTarget ? short(refundTarget) : 'your wallet'}.
               </p>
               <p className="text-xs text-slate-500 mt-2">
-                {fundPath === 'batch'
-                  ? 'Your wallet sends approve and fund together in one atomic batch.'
-                  : 'Your wallet asks for two transactions: approve, then fund.'}
+                {fundPath === 'native'
+                  ? 'Your wallet sends one transaction carrying the ETH.'
+                  : fundPath === 'batch'
+                    ? 'Your wallet sends approve and fund together in one atomic batch.'
+                    : 'Your wallet asks for two transactions: approve, then fund.'}
               </p>
               <CutoffWarning cutoff={nextCutoff} />
               <button

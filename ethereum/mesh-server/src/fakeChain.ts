@@ -40,6 +40,8 @@ export interface FakeChain {
   receipts?: Record<Hex, FakeReceipt>;
   /** Receives the JSON-RPC method of every request. */
   log?: string[];
+  /** Answer for `eth_getBalance` (address as sent); absent or `undefined` means 0. */
+  ethBalance?: (address: string) => bigint | undefined;
 }
 
 export function fakeClient(chain: FakeChain) {
@@ -64,6 +66,8 @@ export function fakeClient(chain: FakeChain) {
             return numberToHex(sepolia.id);
           case 'eth_blockNumber':
             return numberToHex(block++);
+          case 'eth_getBalance':
+            return numberToHex(chain.ethBalance?.(params[0] as string) ?? 0n);
           case 'eth_getCode':
             return code[(params[0] as string).toLowerCase()] ?? '0x';
           case 'eth_getBlockByNumber':
@@ -163,7 +167,7 @@ export interface InvoiceFixture {
   token: Address;
   tiers: { cutoff: bigint; discountBps: number }[];
   dueDate: bigint;
-  /** Token balance of the clone. */
+  /** Balance of the clone: its ERC-20 balance, or its ETH balance when `token` is the zero address. */
   balance: bigint;
 }
 
@@ -177,6 +181,8 @@ export interface World {
   decimals: Record<string, number>;
   /** When set, ERC-20 `balanceOf` fails with this message. */
   balanceError?: string;
+  /** Names of the ERC-20 functions (`decimals`, `balanceOf`) called on any token, in order. */
+  erc20Calls: string[];
   invoice(address: Address): InvoiceFixture;
 }
 
@@ -202,7 +208,7 @@ export function makeWorld(
   }
   const receipts: Record<Hex, FakeReceipt> = {};
   const log: string[] = [];
-  const world = { invoices, receipts, log, decimals: {} as Record<string, number> } as World;
+  const world = { invoices, receipts, log, decimals: {} as Record<string, number>, erc20Calls: [] as string[] } as World;
   world.invoice = (address) => invoices[address.toLowerCase()]!;
 
   const contracts: Record<Address, FakeContract> = {
@@ -210,12 +216,17 @@ export function makeWorld(
   };
   const code: Record<Address, Hex> = { [NOT_CLONE]: '0x6080604052' };
   const tokens = new Set([PYUSD, USDC, ...Object.values(invoices).map((i) => i.token)].map((a) => a.toLowerCase()));
+  tokens.delete(ZERO); // native ETH has no contract
   for (const token of tokens) {
     contracts[token as Address] = {
       abi: erc20Abi,
       reads: {
-        decimals: () => world.decimals[token] ?? 6,
+        decimals: () => {
+          world.erc20Calls.push('decimals');
+          return world.decimals[token] ?? 6;
+        },
         balanceOf: ([holder]: readonly unknown[]) => {
+          world.erc20Calls.push('balanceOf');
           if (world.balanceError) throw new Error(world.balanceError);
           const inv = invoices[(holder as string).toLowerCase()];
           return inv && inv.token.toLowerCase() === token ? inv.balance : 0n;
@@ -249,7 +260,11 @@ export function makeWorld(
     };
   }
 
-  world.chain = { code, contracts, timestamp: opts.timestamp ?? T, receipts, log };
+  const ethBalance = (holder: string) => {
+    const inv = invoices[holder.toLowerCase()];
+    return inv && inv.token === ZERO ? inv.balance : undefined;
+  };
+  world.chain = { code, contracts, timestamp: opts.timestamp ?? T, receipts, log, ethBalance };
   world.client = fakeClient(world.chain);
   return world;
 }

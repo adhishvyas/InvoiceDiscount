@@ -128,3 +128,80 @@ describe('buildHistory', () => {
     expect(buildHistory([created, paid], timestamps).inbound).toBeUndefined();
   });
 });
+
+describe('buildHistory for native ETH', () => {
+  const received = (blockNumber: bigint, n: number, amount: bigint): HistoryLog => ({
+    eventName: 'Received',
+    blockNumber,
+    transactionHash: tx(n),
+    args: { from: PAYER, invoiceRef: REF, amount },
+  });
+  const deferred = (blockNumber: bigint, n: number, amount: bigint, to: `0x${string}` = SELLER): HistoryLog => ({
+    eventName: 'PayoutDeferred',
+    blockNumber,
+    transactionHash: tx(n),
+    args: { to, invoiceRef: REF, amount },
+  });
+  const withdrawn = (blockNumber: bigint, n: number, amount: bigint, account: `0x${string}` = SELLER, to: `0x${string}` = REFUND): HistoryLog => ({
+    eventName: 'Withdrawn',
+    blockNumber,
+    transactionHash: tx(n),
+    args: { account, to, amount },
+  });
+
+  it('maps Received to an inbound entry without invoiceRef', () => {
+    const h = buildHistory([received(35n, 5, 7n)], timestamps);
+    expect(h.inbound).toEqual([{ timestamp: 3500n, tx: tx(5), from: PAYER, amount: 7n }]);
+    expect(Object.keys(h.inbound![0]).sort()).toEqual(['amount', 'from', 'timestamp', 'tx']);
+  });
+  it('maps PayoutDeferred to deferred', () => {
+    const h = buildHistory([deferred(30n, 8, 5n, BUYER)], timestamps);
+    expect(h.deferred).toEqual([{ timestamp: 3000n, tx: tx(8), to: BUYER, amount: 5n }]);
+    expect(h.inbound).toBeUndefined();
+    expect(h.withdrawals).toBeUndefined();
+  });
+  it('maps Withdrawn to withdrawals', () => {
+    const h = buildHistory([withdrawn(38n, 9, 6n, SELLER, BUYER)], timestamps);
+    expect(h.withdrawals).toEqual([{ timestamp: 3800n, tx: tx(9), account: SELLER, to: BUYER, amount: 6n }]);
+    expect(h.deferred).toBeUndefined();
+  });
+  it('sorts each list oldest first, keeping input order for equal timestamps', () => {
+    const h = buildHistory(
+      [received(40n, 1, 3n), received(10n, 2, 1n), received(25n, 3, 2n), deferred(40n, 4, 30n), deferred(20n, 5, 20n), withdrawn(35n, 6, 300n), withdrawn(30n, 7, 200n)],
+      timestamps,
+    );
+    expect(h.inbound?.map((i) => i.amount)).toEqual([1n, 2n, 3n]);
+    expect(h.deferred?.map((i) => i.amount)).toEqual([20n, 30n]);
+    expect(h.withdrawals?.map((i) => i.amount)).toEqual([200n, 300n]);
+    const same = new Map([[50n, 5000n], [51n, 5000n]]);
+    const t = buildHistory(
+      [received(51n, 1, 11n), received(50n, 2, 22n), deferred(51n, 3, 1n), deferred(50n, 4, 2n), withdrawn(51n, 5, 7n), withdrawn(50n, 6, 8n)],
+      same,
+    );
+    expect(t.inbound?.map((i) => i.amount)).toEqual([11n, 22n]);
+    expect(t.deferred?.map((i) => i.amount)).toEqual([1n, 2n]);
+    expect(t.withdrawals?.map((i) => i.amount)).toEqual([7n, 8n]);
+  });
+  it('mixes Transfer and Received in one inbound list sorted by timestamp', () => {
+    const h = buildHistory([received(38n, 1, 2n), inbound(35n, 2, 1n), received(40n, 3, 3n)], timestamps);
+    expect(h.inbound?.map((i) => i.amount)).toEqual([1n, 2n, 3n]);
+  });
+  it('omits the lists when empty', () => {
+    const h = buildHistory([created, funded], timestamps);
+    expect(Object.keys(h).sort()).toEqual(['created', 'funded']);
+  });
+  it('throws on a missing timestamp for each new event', () => {
+    expect(() => buildHistory([received(99n, 1, 1n)], timestamps)).toThrow('Missing timestamp for block 99');
+    expect(() => buildHistory([deferred(98n, 1, 1n)], timestamps)).toThrow('Missing timestamp for block 98');
+    expect(() => buildHistory([withdrawn(97n, 1, 1n)], timestamps)).toThrow('Missing timestamp for block 97');
+  });
+  it('does not depend on log order for lifecycle events alongside the new ones', () => {
+    const logs = [created, funded, deferred(30n, 8, 5n), settledDirect, received(35n, 5, 9n)];
+    const h = buildHistory(logs, timestamps);
+    expect(buildHistory([...logs].reverse(), timestamps).settledDirect).toEqual(h.settledDirect);
+    expect(buildHistory([...logs].reverse(), timestamps).created).toEqual(h.created);
+    expect(h.deferred).toHaveLength(1);
+    expect(h.inbound).toHaveLength(1);
+  });
+});
+

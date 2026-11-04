@@ -20,10 +20,11 @@ const ctx = (patch: Partial<ActionContext>): ActionContext => ({
   cloneBalance: 0n,
   dueNow: DUE_NOW,
   meshSupported: false,
+  owed: 0n,
   ...patch,
 });
 
-const NONE: VisibleActions = { fund: false, trigger: false, cancel: false, finishSettlement: false, acceptAndSettle: false, payWithMesh: false };
+const NONE: VisibleActions = { fund: false, trigger: false, cancel: false, finishSettlement: false, acceptAndSettle: false, payWithMesh: false, withdraw: false };
 /** Only the lifecycle actions, for the cases that predate direct settlement. */
 const lifecycle = ({ fund, trigger, cancel }: VisibleActions) => ({ fund, trigger, cancel });
 
@@ -156,6 +157,7 @@ describe('visibleActions', () => {
         finishSettlement: active && cloneBalance > 0n && cloneBalance >= DUE_NOW,
         acceptAndSettle: active && isSeller && cloneBalance > 0n && cloneBalance < DUE_NOW,
         payWithMesh: false, // meshSupported is false in this matrix
+        withdraw: false, // owed is 0n in this matrix
       };
     };
 
@@ -282,6 +284,62 @@ describe('visibleActions', () => {
           }
         }
       }
+    });
+  });
+  describe('withdraw (native ETH)', () => {
+    const FLAGS = ['fund', 'trigger', 'cancel', 'finishSettlement', 'acceptAndSettle', 'payWithMesh'] as const;
+    const accountOf = { seller: SELLER, buyer: BUYER, stranger: STRANGER } as const;
+    const statuses: StatusValue[] = [Status.Active, Status.Funded, Status.Paid, Status.Cancelled];
+    const buyerOf = (status: StatusValue) => (status === Status.Active ? ZERO : BUYER);
+
+    it('is true iff connected and owed > 0, in every status, for seller, buyer and stranger', () => {
+      for (const [role, account] of Object.entries(accountOf)) {
+        for (const status of statuses) {
+          for (const owed of [0n, 1n, 10n ** 18n]) {
+            const a = visibleActions(ctx({ account, status, buyer: buyerOf(status), owed }));
+            expect(a.withdraw, `${role} status=${status} owed=${owed}`).toBe(owed > 0n);
+          }
+        }
+      }
+    });
+    it('is false with no account even if owed > 0', () => {
+      for (const status of statuses) {
+        expect(visibleActions(ctx({ account: undefined, status, buyer: buyerOf(status), owed: 5n })).withdraw).toBe(false);
+      }
+    });
+    it('does not change any other flag', () => {
+      for (const account of [undefined, SELLER, BUYER, STRANGER]) {
+        for (const status of statuses) {
+          for (const now of [DUE - 1n, DUE + 1n]) {
+            for (const cloneBalance of [0n, 1n, DUE_NOW, DUE_NOW + 1n]) {
+              const base = { account, status, now, cloneBalance, buyer: buyerOf(status), meshSupported: true };
+              const a = visibleActions(ctx({ ...base, owed: 0n }));
+              const b = visibleActions(ctx({ ...base, owed: 7n }));
+              for (const f of FLAGS) expect(b[f], `${f}`).toBe(a[f]);
+            }
+          }
+        }
+      }
+    });
+    it('with no account every flag is false except payWithMesh, whatever owed is', () => {
+      const a = visibleActions(ctx({ account: undefined, meshSupported: true, owed: 9n, cloneBalance: DUE_NOW }));
+      expect({ ...a, payWithMesh: false }).toEqual(NONE);
+    });
+    it('a Paid or Cancelled invoice shows only withdraw when something is owed', () => {
+      for (const status of [Status.Paid, Status.Cancelled]) {
+        for (const account of [SELLER, BUYER, STRANGER]) {
+          expect(visibleActions(ctx({ account, status, buyer: BUYER, owed: 1n }))).toEqual({ ...NONE, withdraw: true });
+        }
+      }
+    });
+    it('treats an ETH invoice (cloneBalance in wei) with the same rules', () => {
+      const eth = 10n ** 18n;
+      const e = (patch: Partial<ActionContext>) => ctx({ dueNow: 9n * eth / 10n, ...patch });
+      expect(visibleActions(e({ account: STRANGER, cloneBalance: eth / 2n })).finishSettlement).toBe(false);
+      expect(visibleActions(e({ account: STRANGER, cloneBalance: 9n * eth / 10n })).finishSettlement).toBe(true);
+      expect(visibleActions(e({ cloneBalance: eth / 2n })).acceptAndSettle).toBe(true);
+      expect(visibleActions(e({ account: STRANGER, cloneBalance: eth / 2n, meshSupported: true })).payWithMesh).toBe(true);
+      expect(visibleActions(e({ account: STRANGER, cloneBalance: eth, owed: 3n * eth })).withdraw).toBe(true);
     });
   });
 });

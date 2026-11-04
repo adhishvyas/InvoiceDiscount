@@ -14,7 +14,7 @@ contract InvoiceFactoryTest is Base {
     function test_Factory_ImplementationWiring() public {
         address impl = factory.implementation();
         assertTrue(impl.code.length > 0, "implementation deployed");
-        assertEq(InvoiceEscrow(impl).factory(), address(factory), "implementation.factory == factory");
+        assertEq(InvoiceEscrow(payable(impl)).factory(), address(factory), "implementation.factory == factory");
 
         InvoiceEscrow inv = _createDefault();
         assertEq(inv.factory(), address(factory), "clones see the factory immutable through the proxy");
@@ -34,9 +34,9 @@ contract InvoiceFactoryTest is Base {
         InvoiceFactory f2 = new InvoiceFactory();
         assertTrue(f2.implementation() != factory.implementation());
         vm.prank(seller);
-        InvoiceEscrow inv2 = InvoiceEscrow(
+        InvoiceEscrow inv2 = InvoiceEscrow(payable(
             f2.createInvoice(REF, address(token), PRINCIPAL, _dueDate(), _defaultTiers(), address(0))
-        );
+        ));
         assertEq(inv2.factory(), address(f2));
         DiscountTier[] memory tiers = _defaultTiers();
         // the first factory is not the authority of a clone made by the second one
@@ -70,8 +70,8 @@ contract InvoiceFactoryTest is Base {
     function test_Factory_CallerBecomesSeller_EvenForContractCallers() public {
         // no prank: the test contract itself is the seller
         address inv = factory.createInvoice(REF, address(token), PRINCIPAL, _dueDate(), _noTiers(), address(0));
-        assertEq(InvoiceEscrow(inv).getInvoice().seller, address(this));
-        assertEq(InvoiceEscrow(inv).getInvoice().payoutAddress, address(this));
+        assertEq(InvoiceEscrow(payable(inv)).getInvoice().seller, address(this));
+        assertEq(InvoiceEscrow(payable(inv)).getInvoice().payoutAddress, address(this));
     }
 
     function test_Factory_ManyInvoices_DistinctAddressesAndIndependentState() public {
@@ -85,7 +85,7 @@ contract InvoiceFactoryTest is Base {
             }
         }
         for (uint256 i = 0; i < 5; i++) {
-            InvoiceState memory s = InvoiceEscrow(invs[i]).getInvoice();
+            InvoiceState memory s = InvoiceEscrow(payable(invs[i])).getInvoice();
             assertEq(s.invoiceRef, bytes32(uint256(i + 1)));
             assertEq(s.principal, uint128((i + 1) * 1_000e6));
             assertEq(s.tiers.length, i);
@@ -206,7 +206,7 @@ contract InvoiceFactoryTest is Base {
     // ═════════════════════════ initialize called directly ═════════════════════════
 
     function _freshClone() internal returns (InvoiceEscrow) {
-        return InvoiceEscrow(Clones.clone(factory.implementation()));
+        return InvoiceEscrow(payable(Clones.clone(factory.implementation())));
     }
 
     function test_Initialize_UninitializedClone_OnlyFactoryMay() public {
@@ -277,7 +277,7 @@ contract InvoiceFactoryTest is Base {
         vm.expectRevert(InvoiceEscrow.InvalidToken.selector);
         c.initialize(seller, REF, NO_CODE, PRINCIPAL, due, ok, address(0));
         vm.expectRevert(InvoiceEscrow.InvalidToken.selector);
-        c.initialize(seller, REF, address(0), PRINCIPAL, due, ok, address(0));
+        c.initialize(seller, REF, address(0x01), PRINCIPAL, due, ok, address(0)); // address(0) is now ETH, not invalid
         // after all those failures the clone can still be initialised
         c.initialize(seller, REF, address(token), PRINCIPAL, due, ok, address(0));
         vm.stopPrank();
@@ -296,7 +296,7 @@ contract InvoiceFactoryTest is Base {
     }
 
     function test_Initialize_ImplementationCannotBeInitialisedByAnyone() public {
-        InvoiceEscrow impl = InvoiceEscrow(factory.implementation());
+        InvoiceEscrow impl = InvoiceEscrow(payable(factory.implementation()));
         DiscountTier[] memory tiers = _defaultTiers();
         address[4] memory callers = [address(factory), stranger, seller, address(this)];
         for (uint256 i = 0; i < 4; i++) {

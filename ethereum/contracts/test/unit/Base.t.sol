@@ -39,11 +39,19 @@ abstract contract Base is Test {
         uint64 dueDate
     );
 
+    // Native-ETH events (ETH spec 3.9).
+    event Received(address indexed from, bytes32 indexed invoiceRef, uint256 amount);
+    event PayoutDeferred(address indexed to, bytes32 indexed invoiceRef, uint256 amount);
+    event Withdrawn(address indexed account, address to, uint256 amount);
+
     // Default invoice (spec 3.8).
     uint128 internal constant PRINCIPAL = 100_000e6;
     uint256 internal constant DAY = 1 days;
     uint64 internal constant T0 = 1_800_000_000; // fixed "invoice date"
     bytes32 internal constant REF = bytes32("INV-2026-0042");
+    /// @dev Default ETH invoice principal (ETH spec 3): 10 ETH. With the default tiers 15% is 1.5 ETH, 10% is 1 ETH.
+    uint128 internal constant ETH_PRINCIPAL = 10 ether;
+    address internal constant NATIVE = address(0);
 
     InvoiceFactory internal factory;
     MockERC20 internal token;
@@ -64,6 +72,9 @@ abstract contract Base is Test {
         token.mint(seller, 1_000_000e6);
         token.mint(buyer, 1_000_000e6);
         token.mint(stranger, 1_000_000e6);
+        vm.deal(seller, 1_000 ether);
+        vm.deal(buyer, 1_000 ether);
+        vm.deal(stranger, 1_000 ether);
     }
 
     // ───────────── token helpers ─────────────
@@ -104,7 +115,7 @@ abstract contract Base is Test {
         address payoutAddress
     ) internal returns (InvoiceEscrow) {
         vm.prank(who);
-        return InvoiceEscrow(factory.createInvoice(ref, tok, principal, dueDate, tiers, payoutAddress));
+        return InvoiceEscrow(payable(factory.createInvoice(ref, tok, principal, dueDate, tiers, payoutAddress)));
     }
 
     /// @dev Spec 3.8 invoice: default payout (the seller).
@@ -129,6 +140,62 @@ abstract contract Base is Test {
     /// @dev Fund as `buyer`.
     function _fund(InvoiceEscrow inv, address refundAddress) internal {
         _fundAs(inv, buyer, refundAddress);
+    }
+
+    // ───────────── ETH invoice helpers ─────────────
+
+    /// @dev ETH invoice with the default tiers and due date; `payoutAddress == 0` means the seller.
+    function _createEthWith(address payoutAddress, DiscountTier[] memory tiers) internal returns (InvoiceEscrow) {
+        return _create(seller, REF, NATIVE, ETH_PRINCIPAL, _dueDate(), tiers, payoutAddress);
+    }
+
+    function _createEth() internal returns (InvoiceEscrow) {
+        return _createEthWith(address(0), _defaultTiers());
+    }
+
+    /// @dev ETH invoice with the custom payout address.
+    function _createEthWithPayout() internal returns (InvoiceEscrow) {
+        return _createEthWith(payout, _defaultTiers());
+    }
+
+    /// @dev Fund an ETH invoice as `who` with exactly its principal.
+    function _fundEthAs(InvoiceEscrow inv, address who, address refundAddress) internal {
+        uint128 p = inv.getInvoice().principal;
+        vm.prank(who);
+        inv.fund{value: p}(refundAddress);
+    }
+
+    function _fundEth(InvoiceEscrow inv, address refundAddress) internal {
+        _fundEthAs(inv, buyer, refundAddress);
+    }
+
+    /// @dev A plain ETH transfer (empty calldata) from `from`; returns the raw outcome.
+    function _sendEth(address from, address to, uint256 amount) internal returns (bool ok, bytes memory ret) {
+        vm.prank(from);
+        (ok, ret) = to.call{value: amount}("");
+    }
+
+    function _sel(bytes memory ret) internal pure returns (bytes4) {
+        return ret.length >= 4 ? bytes4(ret) : bytes4(0);
+    }
+
+    /// @dev Expect the escrow's `Paid` event.
+    function _expectPaid(
+        InvoiceEscrow inv,
+        address caller,
+        address payoutAddr,
+        uint128 toSeller,
+        address refundAddr,
+        uint128 refundAmt,
+        uint16 bps
+    ) internal {
+        vm.expectEmit(true, true, false, true, address(inv));
+        emit Paid(caller, REF, payoutAddr, toSeller, refundAddr, refundAmt, bps);
+    }
+
+    function _expectDeferred(InvoiceEscrow inv, address to, uint256 amount) internal {
+        vm.expectEmit(true, true, false, true, address(inv));
+        emit PayoutDeferred(to, REF, amount);
     }
 
     /// @dev Warp to `days_` days after T0.

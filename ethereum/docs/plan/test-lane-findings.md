@@ -168,3 +168,18 @@ No **impl bugs** and no **test bugs**. (v1 questions 2 and 3 are resolved by the
 | `corepack pnpm build`, `lint` | pass |
 
 Notes: `@meshpayhq/link-web-sdk` **0.0.10**, `openLink(token, clientId, options): LinkHandle`. `onExit` receives `{ status: 'success' | 'canceled' }`, but `canceled` also covers closing Link after paying, so the hook polls on either and ignores `status` (spec §5). A session still `awaiting-transfer` after `expiresAt` stops polling ("No payment arrived before the quote expired."). `handle.close()` on unmount (new; F3 didn't close Link).
+
+## Native ETH: mesh-server (node M3 of [`native-eth-dag.md`](native-eth-dag.md))
+
+> 2026-11-03. V2 implementation `822d7e1`; T2 by Sonnet agent C on tag `ethereum-mesh-server-interface-v3`, `3d1053c` (27 new tests, `fakeChain` serves `eth_getBalance` and records ERC-20 calls). Red check against the stubs: 309 failed, 6 passed (5 existing `fakeChain` tests, plus the `NATIVE_TOKEN` constant).
+
+| Check | Result |
+|---|---|
+| `corepack pnpm test` | 315 pass (after finding 23) |
+| `corepack pnpm typecheck` | pass |
+
+| # | Finding | Kind | Resolution |
+|---|---|---|---|
+| 23 | `native.test.ts` expected `settle` to be called with the lowercase clone address | **test bug** | `decodeTransactionId` documents a checksummed `invoice`, and the existing suite asserts `getAddress(CLONE)`. Test fixed to match |
+| 24 | SPEC-QUESTIONS 14–18: case-insensitive native token, block tag of `eth_getBalance`, `meshTokens` keyed by the zero address, case-sensitive symbol (`eth` ≠ `ETH`), no symbol on an ETH event settles | **spec gap** (none needed) | All match the TSDoc and the implementation. No change |
+| 25 | SPEC-QUESTIONS 19–20: env parsing untested (outside the freeze); webhook tests depend on the `SessionStore.create` stub for red | **spec gap** (none needed) | No change |

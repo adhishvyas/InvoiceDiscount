@@ -28,3 +28,19 @@ Questions 2 and 3 above are resolved by the v2 TSDoc (arrays are `400`; `expires
 ### Tests that pass against the v2 stubs
 
 Again only `src/fakeChain.test.ts` (5 self-tests of the test double). Exports that are implemented rather than stubbed (`MeshApiError`, `MESH_SCOPE`, `TOKEN_REFRESH_MARGIN_SECONDS`, `SIGNATURE_TOLERANCE_SECONDS`, `QUOTE_WINDOW`, `Status`, `STATUS_NAME`) have no test of their own; `MeshApiError` is exercised through the clients.
+
+## Native ETH (T2)
+
+Against `ethereum-mesh-server-interface-v3`. Tests are in `src/native.test.ts`; `fakeChain.ts` gained `eth_getBalance` (`FakeChain.ethBalance`, served from the clone's `balance` when its `token` is the zero address) and `World.erc20Calls` (names of the ERC-20 `decimals`/`balanceOf` calls made).
+
+14. **Token-address case for `tokenBalance`.** The TSDoc says addresses "compare case-insensitively". Tested with `0X000...0` (uppercase prefix) as `NATIVE_TOKEN`; the zero address has no letters, so only the prefix can differ. Whether such input must be accepted is the doubtful part.
+15. **Block for `eth_getBalance`.** The TSDoc says "at the latest block". Tests don't assert the block tag (the fake ignores it).
+16. **`meshTokens` key for ETH.** `meshTokens` keys are "checksummed" addresses; the zero address checksums to itself, so tests use `{ [ZERO]: 'ETH' }`. The 422 test expects the `token` field to be the zero address as is.
+17. **Symbol case.** "`dest.asset.symbol` must equal `meshTokens[invoice.token]`" is read as an exact, case-sensitive match: an event symbol `eth` for an ETH invoice is a `token mismatch`.
+18. **Event with no symbol on an ETH invoice.** As with ERC-20 ("when present"), settles if the balance covers. Tested.
+19. **Env parsing is not tested.** `readEnv` reads `process.env`, has no TSDoc in `env.ts` and is not part of the freeze, so the `ETH:0x000...000` entry of `MESH_TOKENS` is not tested.
+20. **Webhook tests need `SessionStore`.** Like the existing webhook tests, the new webhook tests create sessions with `SessionStore.create`, which is stubbed, so they fail on stubs for that reason before reaching `createEventProcessor`.
+
+### Tests that pass against the v3 stubs
+
+`src/fakeChain.test.ts` (5, unchanged) and one new test: `NATIVE_TOKEN is the zero address` (a constant, implemented in the freeze, not a stub).

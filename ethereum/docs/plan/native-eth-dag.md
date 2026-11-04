@@ -158,6 +158,8 @@ ETH spec §6, server items, added to agent A's mesh-server suite (a fresh Sonnet
 
 As before; findings under "Native ETH: mesh-server".
 
+**Status:** done 2026-11-03: 315 tests pass, typecheck passes; one test bug fixed (findings 23–25). Run before M1, since the ABI synced at C2 is identical to the tag.
+
 ### I1 — End-to-end on Sepolia (user, with Claude)
 
 A new section in [`../e2e-checklist.md`](../e2e-checklist.md); the Mesh plan's I1/I2 are folded into it:

@@ -265,3 +265,71 @@ describe('fetchInvoiceHistory', () => {
     await expect(fetchInvoiceHistory(client, FACTORY, 0n, INVOICE, TOKEN)).rejects.toThrow('rpc exploded');
   });
 });
+
+describe('fetchInvoiceHistory with native ETH and deferred payouts', () => {
+  const NATIVE = '0x0000000000000000000000000000000000000000' as Address;
+  const escrow = (eventName: string, args: Record<string, unknown>, blockNumber: bigint, n: number, address = INVOICE) =>
+    makeLog(invoiceEscrowAbi as Abi, eventName, args, { address, blockNumber, tx: n });
+  const transferTopic = encodeEventTopics({ abi: erc20Abi, eventName: 'Transfer' })[0].toLowerCase();
+  const readsTransfers = (calls: { topics: unknown }[]) =>
+    calls.some((c) => (((c.topics ?? []) as unknown[])[0] !== undefined && JSON.stringify(c.topics).toLowerCase().includes(transferTopic)));
+  const settledDirect = escrow(
+    'SettledDirect',
+    { caller: SELLER, invoiceRef: REF, payoutAddress: SELLER, amount: 900_000n, discountBps: 1000 },
+    300n,
+    6,
+  );
+  const received = (from: Address, amount: bigint, blockNumber: bigint, n: number, address = INVOICE) =>
+    escrow('Received', { from, invoiceRef: REF, amount }, blockNumber, n, address);
+  const deferred = escrow('PayoutDeferred', { to: SELLER, invoiceRef: REF, amount: 5n }, 310n, 11);
+  const withdrawn = escrow('Withdrawn', { account: SELLER, to: BUYER, amount: 5n }, 320n, 12);
+
+  it('for an ETH invoice, includes Received, PayoutDeferred and Withdrawn from the escrow, oldest first', async () => {
+    const { client } = fakeNode(1_000n, [
+      created(INVOICE, SELLER, REF, 100n, 1),
+      received(PAYER, 600n, 250n, 5),
+      received(PAYER, 300n, 200n, 4),
+      received(PAYER, 999n, 220n, 8, OTHER_INVOICE), // another invoice
+      deferred,
+      withdrawn,
+    ]);
+    const history = await fetchInvoiceHistory(client, FACTORY, 0n, INVOICE, NATIVE);
+    expect(history.inbound).toEqual([
+      { timestamp: 2400n, tx: tx(4), from: PAYER, amount: 300n },
+      { timestamp: 3000n, tx: tx(5), from: PAYER, amount: 600n },
+    ]);
+    expect(history.deferred).toEqual([{ timestamp: 3720n, tx: tx(11), to: SELLER, amount: 5n }]);
+    expect(history.withdrawals).toEqual([{ timestamp: 3840n, tx: tx(12), account: SELLER, to: BUYER, amount: 5n }]);
+  });
+  it('for an ETH invoice, makes no ERC-20 Transfer query, even after SettledDirect', async () => {
+    const { client, getLogsCalls } = fakeNode(1_000n, [created(INVOICE, SELLER, REF, 100n, 1), received(PAYER, 900_000n, 250n, 5), settledDirect]);
+    const history = await fetchInvoiceHistory(client, FACTORY, 0n, INVOICE, NATIVE);
+    expect(history.settledDirect?.tx).toBe(tx(6));
+    expect(history.inbound).toHaveLength(1);
+    expect(getLogsCalls.length).toBeGreaterThan(0);
+    expect(readsTransfers(getLogsCalls)).toBe(false);
+  });
+  it('for an ETH invoice, ignores ERC-20 Transfer logs into the invoice', async () => {
+    const t = makeLog(erc20Abi as Abi, 'Transfer', { from: PAYER, to: INVOICE, value: 1n }, { address: TOKEN, blockNumber: 200n, tx: 20 });
+    const { client } = fakeNode(1_000n, [created(INVOICE, SELLER, REF, 100n, 1), t, settledDirect]);
+    expect((await fetchInvoiceHistory(client, FACTORY, 0n, INVOICE, NATIVE)).inbound).toBeUndefined();
+  });
+  it('for an ERC-20 invoice, still reads Transfers after SettledDirect and includes PayoutDeferred and Withdrawn', async () => {
+    const t = makeLog(erc20Abi as Abi, 'Transfer', { from: PAYER, to: INVOICE, value: 600_000n }, { address: TOKEN, blockNumber: 250n, tx: 5 });
+    const { client, getLogsCalls } = fakeNode(1_000n, [created(INVOICE, SELLER, REF, 100n, 1), t, settledDirect, deferred, withdrawn]);
+    const history = await fetchInvoiceHistory(client, FACTORY, 0n, INVOICE, TOKEN);
+    expect(history.inbound).toEqual([{ timestamp: 3000n, tx: tx(5), from: PAYER, amount: 600_000n }]);
+    expect(history.deferred).toHaveLength(1);
+    expect(history.withdrawals).toHaveLength(1);
+    expect(readsTransfers(getLogsCalls)).toBe(true);
+  });
+  it('for an ERC-20 invoice, does not read Transfers before a direct settlement', async () => {
+    const { client, getLogsCalls } = fakeNode(1_000n, [created(INVOICE, SELLER, REF, 100n, 1)]);
+    await fetchInvoiceHistory(client, FACTORY, 0n, INVOICE, TOKEN);
+    expect(readsTransfers(getLogsCalls)).toBe(false);
+  });
+  it('ignores Received events emitted by another contract', async () => {
+    const { client } = fakeNode(1_000n, [created(INVOICE, SELLER, REF, 100n, 1), received(PAYER, 1n, 250n, 5, OTHER_INVOICE)]);
+    expect((await fetchInvoiceHistory(client, FACTORY, 0n, INVOICE, NATIVE)).inbound).toBeUndefined();
+  });
+});

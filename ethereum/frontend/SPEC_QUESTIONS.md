@@ -27,3 +27,21 @@ Not covered: `readInvoice` and `readActiveDiscount` (`lib/invoice.ts`), which on
 
 - `src/config.test.ts`, the two new tests (`MESH_TOKENS` subset/PYUSD+USDG/no USDC, and `MESH_SERVER_URL` unset or set): `config.ts` already holds the real data at the interface tag, as for the other config tests above. Config now has 12 tests, all passing.
 - Every new or changed `actions.test.ts` test (45) and `meshSession.test.ts` test (6) fails against the stubs.
+
+## Native ETH (U1)
+
+7. **`isNative` with a zero address that is not 42 characters or has a `0X` prefix.** The TSDoc says "compared case-insensitively" and "any other string, including a non-address, is false". Tested reading: `0X000...0` and an upper-cased body are true (case-insensitive compare to `NATIVE_TOKEN`); a 43-character all-zero string, `'0x'`, `'0x0'`, `''` and `'ETH'` are false.
+8. **`fundPath` token casing.** The TSDoc defers to `isNative(token)`, so any casing of the zero address, including the `0X` prefix, is `'native'`. Tested reading: yes.
+9. **`visibleActions.withdraw` and `owed` with no account.** `owed` is documented as 0n with no account, but the rule says "connected and `owed > 0n`". Tested reading: with no account `withdraw` is false even if `owed > 0n`.
+10. **`withdraw` on a Paid/Cancelled invoice.** Every other flag is false there, so the only flag that can be true is `withdraw`. Tested reading: `{ all false, withdraw: true }` for seller, buyer and stranger when `owed > 0n`.
+11. **`buildHistory` for `Received`.** `invoiceRef` is dropped from the `inbound` entry. Tested reading: the entry has exactly the keys `timestamp`, `tx`, `from`, `amount`. `Transfer` and `Received` share one `inbound` list, sorted together by timestamp with stable ties.
+12. **How "no `Transfer` query" is detected for an ETH invoice.** The TSDoc says no `Transfer` logs are read. The test treats any `eth_getLogs` call whose topic filter contains the ERC-20 `Transfer` topic0 as a Transfer query; it does not constrain the address filter. For an ETH invoice, ERC-20 `Transfer` logs in the fake node are also expected not to appear in `inbound`.
+13. **`fetchInvoiceHistory` lifecycle query for ETH.** The TSDoc says escrow `Received`, `PayoutDeferred` and `Withdrawn` are read "from the escrow" in the same paged query as the other lifecycle events. The tests only check the resulting history and that events from other contracts are ignored, not the number of `eth_getLogs` calls.
+14. **`Withdrawn` has no `invoiceRef`.** The decoded fixture log carries `account`, `to`, `amount` only (spec §3.9); history entries carry the same three.
+15. **Config order.** The tests check `TOKENS` by symbol (not order) and the length 4; `DEFAULT_TOKEN` is `TOKENS[0]` with symbol PYUSD (as before). `MESH_TOKENS` is checked as a set of symbols.
+
+### Native ETH tests that pass against the stubs (the red check)
+
+- `tokens.test.ts` "NATIVE_TOKEN is the zero address and NATIVE_DECIMALS is 18": pure constants, written in full at the tag.
+- `config.test.ts` "lists PYUSD, USDC and USDG ... and ETH" and "offers Pay with Mesh for PYUSD, USDG and ETH": `config.ts` already holds the real data at the tag.
+- Every other new or changed test (28 new, plus the updated existing `fundPath`, `history` and `actions` tests) fails against the stubs.

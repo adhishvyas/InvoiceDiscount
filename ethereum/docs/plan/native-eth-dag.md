@@ -144,6 +144,8 @@ ETH spec §6, frontend items; the existing suites are updated for the new `Actio
 
 `corepack pnpm sync-abi` from the M1 contracts; test, build, lint; findings under "Native ETH: frontend".
 
+**Status:** done 2026-11-03: 214 tests pass on the first run; build and lint pass; no impl or test bugs (finding 29).
+
 ### V1 — Server interface v3 freeze (main session)
 
 On a branch from `ethereum-mesh-server-interface-v2` (stubs): `invoice.ts` `tokenBalance` TSDoc (native), new `tokenDecimals`; `app.ts` TSDoc (`decimals` via `tokenDecimals`); `.env.example` (`MESH_TOKENS` with ETH). Tag `ethereum-mesh-server-interface-v3`; launch agent C.

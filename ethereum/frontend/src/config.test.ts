@@ -15,12 +15,13 @@ describe('config', () => {
     expect(config.connectors[0].type).toBe('injected');
     expect(config._internal.mipd).toBeUndefined();
   });
-  it('lists PYUSD, USDC and USDG at the spec addresses', () => {
-    expect(TOKENS.map((t) => [t.symbol, t.address])).toEqual([
-      ['PYUSD', '0xCaC524BcA292aaade2DF8A05cC58F0a65B1B3bB9'],
-      ['USDC', '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238'],
-      ['USDG', '0xfBb2A78CceEb415b00300925e464C3E44E6e06b0'],
-    ]);
+  it('lists PYUSD, USDC and USDG at the spec addresses, and ETH at the zero address', () => {
+    const by = (sym: string) => TOKENS.find((t) => t.symbol === sym)?.address;
+    expect(by('PYUSD')).toBe('0xCaC524BcA292aaade2DF8A05cC58F0a65B1B3bB9');
+    expect(by('USDC')).toBe('0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238');
+    expect(by('USDG')).toBe('0xfBb2A78CceEb415b00300925e464C3E44E6e06b0');
+    expect(by('ETH')).toBe('0x0000000000000000000000000000000000000000');
+    expect(TOKENS).toHaveLength(4);
   });
   it('has valid, distinct, checksummed token addresses', () => {
     for (const t of TOKENS) expect(isAddress(t.address, { strict: true })).toBe(true);
@@ -37,8 +38,9 @@ describe('config', () => {
   it('has an ETH faucet link', () => {
     expect(ETH_FAUCET_URL).toMatch(/^https:\/\//);
   });
-  it('offers Pay with Mesh for PYUSD and USDG only, a subset of TOKENS with the same addresses', () => {
-    expect(MESH_TOKENS.map((t) => t.symbol).sort()).toEqual(['PYUSD', 'USDG']);
+  it('offers Pay with Mesh for PYUSD, USDG and ETH only, a subset of TOKENS with the same addresses', () => {
+    expect(MESH_TOKENS.map((t) => t.symbol).sort()).toEqual(['ETH', 'PYUSD', 'USDG']);
+    expect(MESH_TOKENS.find((t) => t.symbol === 'ETH')?.address).toBe('0x0000000000000000000000000000000000000000');
     for (const m of MESH_TOKENS) expect(TOKENS).toContainEqual({ symbol: m.symbol, address: m.address });
     expect(MESH_TOKENS.map((t) => t.symbol)).not.toContain('USDC');
     const usdc = TOKENS.find((t) => t.symbol === 'USDC')!;

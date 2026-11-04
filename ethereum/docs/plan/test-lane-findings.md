@@ -201,3 +201,19 @@ Notes: `@meshpayhq/link-web-sdk` **0.0.10**, `openLink(token, clientId, options)
 | 28 | ETH-2, 3, 4, 8, 9, 11, 12, 15, 17, 18: implementation `triggerPayment` gives `NotParty`; stray ETH stays after `fund` or an unfunded cancel; `withdraw(address(0))` allowed; zero-value `receive` emits `Received(.., 0)`; forced ETH counts | **spec gap** (none needed) | Each matches the spec and NatSpec. No change |
 
 No **impl bugs** and no **test bugs**.
+
+## Native ETH: frontend (node M2 of [`native-eth-dag.md`](native-eth-dag.md))
+
+> 2026-11-03. F2 `293c801`; U1 by Sonnet agent B on tag `ethereum-frontend-interface-v4`, `1be8466`: 28 new tests (`tokens.test.ts`, native blocks in the `fundPath`, `actions`, `history` and `fetch` tests), plus the existing tests updated for `owed`/`withdraw`/`fundPath(…, token)` and the token lists. Red check against the stubs: 94 failed, 120 passed (untouched modules, constants and config data).
+
+| Check | Result |
+|---|---|
+| `corepack pnpm test` | 214 pass, first run |
+| `corepack pnpm build`, `lint` | pass |
+| `sync-abi` from the M1 contracts | no change |
+
+| # | Finding | Kind | Resolution |
+|---|---|---|---|
+| 29 | SPEC-QUESTIONS 7–15: `isNative` case-insensitive (also `0X`); `withdraw` false with no account; only `withdraw` on a Paid/Cancelled invoice with a credit; `inbound` entry keys; "no `Transfer` query" means no `eth_getLogs` with the `Transfer` topic | **spec gap** (none needed) | All match the TSDoc and the implementation. No change |
+
+No **impl bugs** and no **test bugs**.

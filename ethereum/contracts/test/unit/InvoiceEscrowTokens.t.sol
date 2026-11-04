@@ -177,7 +177,7 @@ contract InvoiceEscrowTokensTest is Base {
                 payoutAddress
             )
         );
-        return InvoiceEscrow(abi.decode(ret, (address)));
+        return InvoiceEscrow(payable(abi.decode(ret, (address))));
     }
 
     function _fundWith(ReentrantToken t, InvoiceEscrow inv, address who) internal {
@@ -307,9 +307,9 @@ contract InvoiceEscrowTokensTest is Base {
             vm.warp(T0);
             ReentrantToken t = new ReentrantToken();
             vm.prank(seller);
-            InvoiceEscrow inv = InvoiceEscrow(
+            InvoiceEscrow inv = InvoiceEscrow(payable(
                 factory.createInvoice(REF, address(t), PRINCIPAL, _dueDate(), _defaultTiers(), payout)
-            );
+            ));
             t.mint(address(t), 2 * FUND_AMOUNT);
             t.approveSelf(address(inv), 2 * FUND_AMOUNT);
 

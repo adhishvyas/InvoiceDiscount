@@ -464,19 +464,19 @@ contract InvoiceEscrowTest is Base {
         vm.prank(seller);
         address inv = factory.createInvoice(REF, address(token), PRINCIPAL, _dueDate(), _defaultTiers(), payout);
         assertEq(inv, predicted, "returned address is the clone that was initialised");
-        assertEq(InvoiceEscrow(inv).getInvoice().seller, seller);
+        assertEq(InvoiceEscrow(payable(inv)).getInvoice().seller, seller);
 
         // someone else calling gets their own invoice with themselves as seller
         vm.prank(stranger);
         address inv2 = factory.createInvoice(REF, address(token), PRINCIPAL, _dueDate(), _defaultTiers(), address(0));
         assertTrue(inv2 != inv);
-        assertEq(InvoiceEscrow(inv2).getInvoice().seller, stranger);
-        assertEq(InvoiceEscrow(inv2).getInvoice().payoutAddress, stranger);
+        assertEq(InvoiceEscrow(payable(inv2)).getInvoice().seller, stranger);
+        assertEq(InvoiceEscrow(payable(inv2)).getInvoice().payoutAddress, stranger);
     }
 
     function test_InitializeOnlyOnceAndOnlyFactory() public {
         InvoiceEscrow inv = _createDefault();
-        InvoiceEscrow impl = InvoiceEscrow(factory.implementation());
+        InvoiceEscrow impl = InvoiceEscrow(payable(factory.implementation()));
         DiscountTier[] memory tiers = _defaultTiers();
 
         // NotFactory on a clone, from several callers (including the seller, and the clone itself)
@@ -555,9 +555,8 @@ contract InvoiceEscrowTest is Base {
         _expectCreateRevert(InvoiceEscrow.DiscountTooLarge.selector, REF, tok, PRINCIPAL, due, t);
         t[0] = DiscountTier(T0 + 10, type(uint16).max);
         _expectCreateRevert(InvoiceEscrow.DiscountTooLarge.selector, REF, tok, PRINCIPAL, due, t);
-        // InvalidToken: an EOA, the zero address, an address with no code (spec 3.5: `token.code.length == 0`)
+        // InvalidToken: an EOA or an address with no code (address(0) is now the ETH token, see InvoiceEscrowNative.t.sol) (spec 3.5: `token.code.length == 0`)
         _expectCreateRevert(InvoiceEscrow.InvalidToken.selector, REF, NO_CODE, PRINCIPAL, due, ok);
-        _expectCreateRevert(InvoiceEscrow.InvalidToken.selector, REF, address(0), PRINCIPAL, due, ok);
         _expectCreateRevert(InvoiceEscrow.InvalidToken.selector, REF, seller, PRINCIPAL, due, ok);
         _expectCreateRevert(InvoiceEscrow.InvalidToken.selector, REF, address(0x01), PRINCIPAL, due, ok); // precompile, no code
         _expectCreateRevert(InvoiceEscrow.InvalidToken.selector, REF, makeAddr("anotherEoa"), PRINCIPAL, due, ok);
@@ -568,7 +567,7 @@ contract InvoiceEscrowTest is Base {
         // creation succeeds; `fund` then reverts because the token call fails (the contract has no `transferFrom`
         // and no fallback, so the revert data is empty and SafeERC20 bubbles it unchanged). A contract WITH a
         // permissive fallback is not tested: see SPEC_QUESTIONS.md.
-        InvoiceEscrow impl = InvoiceEscrow(factory.implementation());
+        InvoiceEscrow impl = InvoiceEscrow(payable(factory.implementation()));
         address[2] memory notTokens = [address(factory), address(impl)];
         for (uint256 i = 0; i < 2; i++) {
             InvoiceEscrow inv = _create(seller, REF, notTokens[i], PRINCIPAL, _dueDate(), _defaultTiers(), address(0));

@@ -54,12 +54,73 @@ plain comment naming the Tempo question). Dispositions:
   allowance and balance failures are OpenZeppelin's `ERC20InsufficientAllowance` / `ERC20InsufficientBalance`, with
   arguments, which bubble through `SafeERC20` unchanged.
 
+## ETH
+
+Ambiguities met while writing the native-ETH tests (interface `ethereum-interface-v2`). Each bullet gives the reading the
+test assumes. Tests that depend on one carry a plain reference to it.
+
+- **ETH-1, order of logs.** The NatSpec says the escrow's own event is emitted after the payments, so a deferred
+  push logs `PayoutDeferred` before `Paid` / `Cancelled` / `SettledDirect`, and the payout's `PayoutDeferred` comes before the
+  refund's. `vm.expectEmit` is order-sensitive, so the tests assert exactly that order.
+  (`test_Push_Trigger_BothFail_BothCreditedInOrder`, `test_Push_Trigger_PayoutFails_CreditedAndRefundStillPaid`)
+- **ETH-2, `triggerPayment` on the implementation.** NatSpec says it reverts "with its status error", but the
+  implementation has no seller or buyer, so any real caller fails `NotParty` (checked first) before `NotFunded`. The test
+  accepts either selector and requires a revert. (`test_Impl_TriggerPaymentReverts`)
+- **ETH-3, stray ETH followed by `fund`.** ETH received while Active and then overtaken by `fund` stays in the clone
+  (spec 3.11); `triggerPayment` splits `principal` only, as for tokens (question 3 above). `fund` itself requires
+  `msg.value == principal` whatever the balance. (`test_Eth_StrayEthBeforeFunding_StaysAfterTrigger`)
+- **ETH-4, unfunded `cancel` with stray ETH.** "An Active invoice moves no tokens" is read as: the escrow's ETH stays
+  where it is, nothing is sent, nothing is deferred. (`test_Eth_Cancel_Unfunded_StrayEthStaysInClone`,
+  `test_Eth_Cancel_Unfunded_NoEthMoves`)
+- **ETH-5, the 50,000 gas cap.** A value-bearing `CALL` gives the callee its gas argument plus the 2,300 stipend, so the
+  recipient is assumed to see at most 52,300 gas and (a cap that is not much lower) more than 45,000. A receiver that
+  needs 40,000 must succeed; one that needs 60,000 must be deferred. The exact boundary (50,000 vs 52,300) is not
+  asserted. (`test_Push_GasCap_ReceiverSeesAbout50kGas`, `_ReceiverNeedingLessThanCapIsPaid`, `_ReceiverNeedingMoreThanCapIsDeferred`)
+- **ETH-6, "no return data copied" is not directly observable.** A black-box test can only show that a recipient that
+  reverts with, or returns, 60,000 bytes (the most that fits in the 50k cap) neither breaks the call nor makes the caller
+  pay more than a bounded amount of gas (< 400k). A copying implementation would pass this too, since the memory cost of
+  60 KB is small; the check is a regression guard, not proof. (`test_Push_Trigger_ReturnBomb*`)
+- **ETH-7, caller gas bound.** "The caller's tx doesn't consume more than a bounded amount of gas" with a `GasBurner` is
+  asserted as < 400,000 gas for `triggerPayment` (two capped pushes), < 300,000 for `cancel` / `settleDirect`.
+  The bounds are loose (an uncapped burner takes ~all the gas). (`test_Push_*CallerGasBounded*`)
+- **ETH-8, `withdraw` to `address(0)`.** NatSpec says `address(0)` is not special, so the ETH is sent (burnt) and
+  `Withdrawn(account, address(0), amount)` is emitted. (`test_Withdraw_ToZeroAddressIsNotSpecial`)
+- **ETH-9, `withdraw` to an all-gas burner.** The recipient burns the forwarded gas; the escrow keeps 1/64, enough to
+  revert, so the error is `WithdrawFailed` (not an out-of-gas failure of the whole call). The credit is kept.
+  (`test_Withdraw_ToGasBurnerFailsAfterItStopsBurningSucceeds`, `test_Withdraw_FailureKeepsCredit_WithdrawFailed`)
+- **ETH-10, `Withdrawn` topics.** Only `account` is indexed; `to` and `amount` are in the data (as declared), and the
+  event carries no `invoiceRef`. (all `Withdrawn` expectations use `expectEmit(true, false, false, true)`)
+- **ETH-11, zero-value plain call.** A call with empty calldata and no value reaches `receive()` and emits
+  `Received(from, ref, 0)` (the event doc says "`amount` may be 0"). It does not create a balance for `settleDirect`.
+  (`test_Eth_Receive_ZeroValuePlainCallAccepted`, `test_Eth_SettleDirect_NothingToSettle`)
+- **ETH-12, `receive()` check order.** ERC-20 invoice is `NativeNotAccepted` in every status (Funded, Paid), before
+  the status check. (`test_Receive_Erc20Invoice_NativeNotAcceptedInEveryStatus`)
+- **ETH-13, `fund` check order.** `NotActive`, then `SellerCannotFund`, then `IncorrectValue`; also on ERC-20 invoices
+  (`IncorrectValue(sent, 0)`). (`test_Eth_Fund_CheckOrder_*`, `test_Fund_Erc20_*`)
+- **ETH-14, credits accumulate.** When one address is both payout and refund and both pushes fail, `owed` is the sum and two
+  `PayoutDeferred` events are emitted (one per payment, not one merged). (`test_Push_Trigger_SameAddressForPayoutAndRefund_CreditsAccumulate`)
+- **ETH-15, `settleDirect` balance source.** ERC-20 invoices ignore ETH forced into the clone, and ETH invoices ignore
+  tokens sent to the clone (`NothingToSettle`). Forced ETH counts whether set with `vm.deal` or a `selfdestruct`
+  (a `ForceSend` mock). (`test_Erc20_ForcedEthIsIgnoredBySettleDirect`, `test_Eth_TokensSentToEthInvoiceAreIgnoredBySettleDirect`, `test_Eth_SettleDirect_*Forced*`)
+- **ETH-16, reentrancy from a seller calling `fund`.** The re-entered `fund` made by the seller fails `NotActive`
+  (not `SellerCannotFund`), by the check order. A re-entered `cancel` made by a buyer before the due date fails
+  `NotAuthorizedToCancel` (authorisation is checked before the status), so the refund-during-trigger test expects that; the
+  after-due-date variants expect `AlreadySettled`. (`test_Reentrancy_*`)
+- **ETH-17, 2,300-gas stipend.** `send` returns false and `transfer` reverts because `receive()` reads storage and emits
+  (and a clone adds a delegatecall); the test relies on the spec statement, not on a measured cost.
+  (`test_Eth_Receive_TransferAndSendWithStipendFail`)
+- **ETH-18, `address(0)` creation.** Existing tests that expected `InvalidToken` for `address(0)` now expect success;
+  `InvalidToken` is still asserted for EOAs and `address(0x01)` (no code). `address(1)` / `address(0x01)` are the same address.
+  (`test_Eth_Create_*`, edited `InvoiceEscrow.t.sol`, `InvoiceFactory.t.sol`, `InvoiceFork.t.sol`)
+
 ## Red check
 
-`forge test --match-path 'test/unit/*'` against the stubs: 148 of 154 fail. The 6 that pass are the harness self-tests
-`BaseSelfTest::test_Harness_*` in `test/unit/Base.t.sol`. They exercise only the mocks (mint, approve, transfer,
-pause, blocklist, 18 decimals, no-return and false-return behaviour, the reentrancy hook) and never call the factory's
-`createInvoice` or the escrow. The fork suite (11 tests) is red against the stubs.
+`forge test` against the `ethereum-interface-v2` stubs: 268 tests (154 existing + 114 new in
+`InvoiceEscrowNative.t.sol` (76) and `InvoiceEscrowNativeFailures.t.sol` (38)); 262 fail, 6 pass. The 6 that pass are the
+harness self-tests `BaseSelfTest::test_Harness_*` in `test/unit/Base.t.sol`, which exercise only the mocks and never call
+the factory's `createInvoice` or the escrow. Every new test fails against the stubs (`unimplemented`). The fork suite is
+14 tests (11 existing + `test_Fork_EthLifecycle_CreateFundTrigger`, `test_Fork_EthSettleDirect`,
+`test_Fork_Gas_CreateInvoice_Eth`); all red against the stubs.
 
 ## Validation of the tests themselves
 
@@ -70,3 +131,9 @@ and `fund` (caught by the reentrancy tests), `safeTransferFrom` replaced by a pl
 false-return tests), a zero `invoiceRef` in an event, skipping the zero-amount payout transfer, rounding the refund up,
 dropping the token code check, letting `address(0)` act as the buyer, and removing the seller-only underpayment
 override.
+
+For the ETH tests the same method was repeated with a throw-away reference written from the v2 spec (outside the repo,
+not committed): all 268 unit tests and all 14 fork tests pass against it. Mutations caught: uncapped push gas, a capped
+`withdraw`, a failed push that reverts, zero-amount sends not skipped, `owed` cleared after the call in `withdraw`,
+status written after the pushes in `triggerPayment`, `receive()` without the status check, and a missing `Cancelled`
+status on the implementation.

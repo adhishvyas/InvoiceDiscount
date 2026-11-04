@@ -183,3 +183,21 @@ Notes: `@meshpayhq/link-web-sdk` **0.0.10**, `openLink(token, clientId, options)
 | 23 | `native.test.ts` expected `settle` to be called with the lowercase clone address | **test bug** | `decodeTransactionId` documents a checksummed `invoice`, and the existing suite asserts `getAddress(CLONE)`. Test fixed to match |
 | 24 | SPEC-QUESTIONS 14–18: case-insensitive native token, block tag of `eth_getBalance`, `meshTokens` keyed by the zero address, case-sensitive symbol (`eth` ≠ `ETH`), no symbol on an ETH event settles | **spec gap** (none needed) | All match the TSDoc and the implementation. No change |
 | 25 | SPEC-QUESTIONS 19–20: env parsing untested (outside the freeze); webhook tests depend on the `SessionStore.create` stub for red | **spec gap** (none needed) | No change |
+
+## Native ETH: contracts (node M1 of [`native-eth-dag.md`](native-eth-dag.md))
+
+> 2026-11-03. C2 implementation `d71c549`; T1 by Sonnet agent A on tag `ethereum-interface-v2`, `9728587`: 114 new unit tests (`InvoiceEscrowNative.t.sol`, `InvoiceEscrowNativeFailures.t.sol`), 3 fork tests, and mocks for rejecting, gas-burning, return-bomb, gas-probe and reentrant receivers. The existing suite took only the `payable(...)` casts and the move of the `address(0)` `InvalidToken` cases. Red check against the stubs: 262 failed, 6 passed (the harness self-tests).
+
+| Check | Result |
+|---|---|
+| `forge test` | 268 pass, first run |
+| Fork suite (Sepolia) | 14 pass; `createInvoice` with ETH and 3 tiers is 237,572 gas (test call) |
+| `forge coverage` of `src/` | 100% lines, statements, branches and functions |
+
+| # | Finding | Kind | Resolution |
+|---|---|---|---|
+| 26 | ETH-1, 10, 13, 14, 16: event order (`PayoutDeferred` before the escrow event), `Withdrawn` without `invoiceRef`, `fund` check order, credits accumulate per address, reentrant `fund`/`cancel` errors | **spec gap** (none needed) | All as the NatSpec states. No change |
+| 27 | ETH-5, 6, 7: the exact 50,000-gas boundary, "no return data copied" and caller gas are not black-box observable; the tests use bounds (40k paid, 60k deferred; 60 kB bomb harmless) | **spec gap** (none needed) | The implementation's `call(PUSH_GAS, to, amount, 0, 0, 0, 0)` meets the rule; the bounds guard regressions |
+| 28 | ETH-2, 3, 4, 8, 9, 11, 12, 15, 17, 18: implementation `triggerPayment` gives `NotParty`; stray ETH stays after `fund` or an unfunded cancel; `withdraw(address(0))` allowed; zero-value `receive` emits `Received(.., 0)`; forced ETH counts | **spec gap** (none needed) | Each matches the spec and NatSpec. No change |
+
+No **impl bugs** and no **test bugs**.

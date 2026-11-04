@@ -29,6 +29,7 @@ contract InvoiceForkTest is Test {
     event SettledDirect(
         address indexed caller, bytes32 indexed invoiceRef, address payoutAddress, uint256 amount, uint16 discountBps
     );
+    event Received(address indexed from, bytes32 indexed invoiceRef, uint256 amount);
     event InvoiceCreated(
         address indexed invoice,
         address indexed seller,
@@ -45,6 +46,7 @@ contract InvoiceForkTest is Test {
 
     bytes32 internal constant REF = bytes32("INV-2026-0042");
     uint128 internal constant PRINCIPAL = 10_000e6;
+    uint128 internal constant ETH_PRINCIPAL = 1 ether;
 
     InvoiceFactory internal factory;
 
@@ -76,7 +78,7 @@ contract InvoiceForkTest is Test {
 
     function _create(address tok, address payoutAddress) internal returns (InvoiceEscrow) {
         vm.prank(seller);
-        return InvoiceEscrow(factory.createInvoice(REF, tok, PRINCIPAL, due, _tiers(), payoutAddress));
+        return InvoiceEscrow(payable(factory.createInvoice(REF, tok, PRINCIPAL, due, _tiers(), payoutAddress)));
     }
 
     function _fund(InvoiceEscrow inv, address tok, address refundAddress) internal {
@@ -220,7 +222,7 @@ contract InvoiceForkTest is Test {
             DiscountTier[] memory t = new DiscountTier[](1);
             t[0] = DiscountTier(t0 + 10 days, 10_000);
             vm.prank(seller);
-            InvoiceEscrow inv = InvoiceEscrow(factory.createInvoice(REF, toks[i], PRINCIPAL, due, t, payout));
+            InvoiceEscrow inv = InvoiceEscrow(payable(factory.createInvoice(REF, toks[i], PRINCIPAL, due, t, payout)));
             _fund(inv, toks[i], refund);
             _expectTransfer(toks[i], address(inv), payout, 0);
             _expectTransfer(toks[i], address(inv), refund, PRINCIPAL);
@@ -242,7 +244,6 @@ contract InvoiceForkTest is Test {
 
     function test_Fork_InvalidToken_EOAAndEmptyAddresses() public {
         assertEq(DEAD.code.length, 0, "sanity: the dead address has no code on Sepolia");
-        _expectInvalidToken(address(0));
         _expectInvalidToken(DEAD);
         _expectInvalidToken(buyer); // an EOA
         _expectInvalidToken(seller);
@@ -299,5 +300,108 @@ contract InvoiceForkTest is Test {
         uint256 g10 = _gasCreate("createInvoice_10_tiers", 10);
         assertLt(g0, g3);
         assertLt(g3, g10);
+    }
+
+    // ───────────────────────── native ETH ─────────────────────────
+
+    function _createEth(address payoutAddress) internal returns (InvoiceEscrow) {
+        vm.prank(seller);
+        return InvoiceEscrow(
+            payable(factory.createInvoice(REF, address(0), ETH_PRINCIPAL, due, _tiers(), payoutAddress))
+        );
+    }
+
+    function test_Fork_EthLifecycle_CreateFundTrigger() public {
+        vm.deal(buyer, 10 ether);
+        address predicted = vm.computeCreateAddress(address(factory), vm.getNonce(address(factory)));
+        vm.expectEmit(true, true, true, true, address(factory));
+        emit InvoiceCreated(predicted, seller, REF, address(0), ETH_PRINCIPAL, due);
+        InvoiceEscrow inv = _createEth(payout);
+        assertEq(address(inv), predicted);
+        assertEq(inv.getInvoice().token, address(0));
+        assertEq(uint8(inv.getInvoice().status), uint8(Status.Active));
+
+        // fund with value
+        uint256 buyerBefore = buyer.balance;
+        vm.expectEmit(true, true, false, true, address(inv));
+        emit Funded(buyer, REF, refund, ETH_PRINCIPAL);
+        vm.prank(buyer);
+        inv.fund{value: ETH_PRINCIPAL}(refund);
+        assertEq(address(inv).balance, ETH_PRINCIPAL);
+        assertEq(buyerBefore - buyer.balance, ETH_PRINCIPAL);
+        assertEq(uint8(inv.getInvoice().status), uint8(Status.Funded));
+
+        // a wrong value is refused
+        InvoiceEscrow other = _createEth(payout);
+        vm.expectRevert(abi.encodeWithSelector(InvoiceEscrow.IncorrectValue.selector, ETH_PRINCIPAL - 1, ETH_PRINCIPAL));
+        vm.prank(buyer);
+        other.fund{value: ETH_PRINCIPAL - 1}(refund);
+
+        // pay on day 5: 15% back to the refund address
+        vm.warp(t0 + 5 days);
+        vm.expectEmit(true, true, false, true, address(inv));
+        emit Paid(seller, REF, payout, 0.85 ether, refund, 0.15 ether, 1500);
+        vm.prank(seller);
+        inv.triggerPayment();
+        assertEq(payout.balance, 0.85 ether);
+        assertEq(refund.balance, 0.15 ether);
+        assertEq(address(inv).balance, 0);
+        assertEq(inv.owed(payout), 0);
+        assertEq(uint8(inv.getInvoice().status), uint8(Status.Paid));
+
+        // a late payment to a Paid invoice is refused and stays with the sender
+        vm.deal(stranger, 1 ether);
+        vm.prank(stranger);
+        (bool ok,) = address(inv).call{value: 1 ether}("");
+        assertFalse(ok);
+        assertEq(stranger.balance, 1 ether);
+
+        // cancel after funding refunds the principal
+        vm.warp(t0);
+        InvoiceEscrow c = _createEth(payout);
+        vm.prank(buyer);
+        c.fund{value: ETH_PRINCIPAL}(address(0));
+        uint256 buyerBeforeCancel = buyer.balance;
+        vm.prank(seller);
+        c.cancel();
+        assertEq(buyer.balance - buyerBeforeCancel, ETH_PRINCIPAL);
+        assertEq(address(c).balance, 0);
+    }
+
+    function test_Fork_EthSettleDirect() public {
+        vm.deal(buyer, 10 ether);
+        InvoiceEscrow inv = _createEth(payout);
+        vm.warp(t0 + 5 days);
+
+        // a direct payment, one wei short of the amount due (85%)
+        vm.expectEmit(true, true, false, true, address(inv));
+        emit Received(buyer, REF, 0.85 ether - 1);
+        vm.prank(buyer);
+        (bool ok,) = address(inv).call{value: 0.85 ether - 1}("");
+        assertTrue(ok);
+        vm.expectRevert(abi.encodeWithSelector(InvoiceEscrow.InsufficientDirectPayment.selector, 0.85 ether - 1, 0.85 ether));
+        vm.prank(stranger);
+        inv.settleDirect();
+
+        vm.prank(buyer);
+        (ok,) = address(inv).call{value: 1}("");
+        assertTrue(ok);
+        vm.expectEmit(true, true, false, true, address(inv));
+        emit SettledDirect(stranger, REF, payout, 0.85 ether, 1500);
+        vm.prank(stranger);
+        inv.settleDirect();
+        assertEq(payout.balance, 0.85 ether);
+        assertEq(address(inv).balance, 0);
+        assertEq(uint8(inv.getInvoice().status), uint8(Status.Paid));
+    }
+
+    function test_Fork_Gas_CreateInvoice_Eth() public {
+        DiscountTier[] memory tiers = _tiersN(3);
+        vm.prank(seller);
+        uint256 g0 = gasleft();
+        factory.createInvoice(REF, address(0), ETH_PRINCIPAL, due, tiers, payout);
+        uint256 used = g0 - gasleft();
+        console.log("createInvoice_eth_3_tiers", used);
+        assertLt(used, 2_000_000, "sanity bound");
     }
 }

@@ -106,6 +106,8 @@ Extend the port's suite (it stays as is and must keep passing):
 
 As port M1: `forge test`, the fork suite, `forge coverage` at 100% of `src/`. Findings go in `test-lane-findings.md` under "Native ETH: contracts".
 
+**Status:** done 2026-11-03: 268 unit and 14 fork tests pass on the first run, with 100% coverage of `src/`; no impl or test bugs (findings 26–28).
+
 ### C3 — Sepolia deploy (user broadcasts)
 
 Same command as the port (`--gas-estimate-multiplier 800`). Update `contracts/deployments/sepolia.json` (keep the old addresses under `previous`), the frontend `.env`, and mesh-server's `FACTORY_ADDRESS`.

@@ -188,12 +188,16 @@ Apply S1's corrections to the spec (token table, any API name changes, `LOG_PAGE
 
 ### C3 — InvoiceEscrow port (main session, in parallel with T1–T3)
 
+> **Status:** ✅ **Completed** 2026-10-30. `forge build` passes; ABI equals the tag plus `SafeERC20FailedOperation(address)` (allowed, see C2).
+
 - Restore the function bodies from `tempo/contracts/src/InvoiceEscrow.sol`, then apply the spec's Ethereum changes: the `token.code.length` check, `SafeERC20` calls in place of the memo transfers, `invoiceRef` in each `emit`.
 - Keep the Tempo order of effects and interactions. In `fund`, `status = Funded` comes before `safeTransferFrom` (spec §3.5).
 
 **Verify:** `forge build`; the ABI is identical to `ethereum-interface-v1`. (No tests in this lane; they arrive at M1.)
 
 ### C4 — InvoiceFactory + Deploy port (main session)
+
+> **Status:** ✅ **Completed** 2026-10-30. ABI equals the tag plus `FailedDeployment()` and `InsufficientBalance(uint256,uint256)` (allowed, see C2); `forge script script/Deploy.s.sol` (no broadcast) logs both addresses.
 
 - `InvoiceFactory.sol`: restore the Tempo body (`Clones.clone` → `initialize` → emit → return).
 - `script/Deploy.s.sol`: copy from Tempo; update the comment to `$SEPOLIA_RPC_URL`.
@@ -202,12 +206,16 @@ Apply S1's corrections to the spec (token table, any API name changes, `LOG_PAGE
 
 ### T1 — Harness + mock tokens (Sonnet agent A)
 
+> **Status:** ✅ **Completed** 2026-10-30, branch `ethereum-contract-tests` (`162d737`). Mocks plus 6 harness self-tests.
+
 - Port `tempo/contracts/test/unit/Base.t.sol`. Replace the TIP-20 setup with `test/mocks/MockERC20.sol` (OpenZeppelin `ERC20`, 6 decimals, public `mint`). Keep the named actors and helpers.
 - New mocks in `test/mocks/` for the spec §6 cases: `NoReturnToken` (USDT-style, no return value), `FalseReturnToken` (returns `false`), `ReentrantToken` (calls back into the escrow during `transfer`), and an `18`-decimal `MockERC20` for amount tests.
 
 **Verify:** `forge build`; a harness self-test mints and transfers each mock.
 
 ### T2 — Unit tests, ported + new (Sonnet agent A)
+
+> **Status:** ✅ **Completed** 2026-10-30. 154 unit tests (133 ported, 15 new, 6 harness); 148 red against the stubs, the 6 harness tests justified in `test/SPEC_QUESTIONS.md`. 3 new spec questions.
 
 - Port `InvoiceEscrow.t.sol`, `InvoiceEscrowEdge.t.sol`, `InvoiceEscrowSettleDirect.t.sol` and `InvoiceFactory.t.sol`:
   - `TransferWithMemo` assertions → `vm.expectEmit` on the escrow event with `invoiceRef`, plus the ERC-20 `Transfer` event for amounts and recipients.
@@ -219,12 +227,16 @@ Apply S1's corrections to the spec (token table, any API name changes, `LOG_PAGE
 
 ### T3 — Fork tests on Sepolia (Sonnet agent A)
 
+> **Status:** ✅ **Completed** 2026-10-30. 11 fork tests, all red against the stubs; `deal` used for funding.
+
 - Port `tempo/contracts/test/fork/InvoiceFork.t.sol` to Sepolia: `test_Fork_PyusdLifecycle`, `test_Fork_UsdcLifecycle` (create, fund, pay with a discount, cancel), `InvalidToken` against an EOA, and the `createInvoice` gas snapshot with 0, 3 and 10 tiers.
 - Fund actors with `deal`, or a holder `prank` if S1 item 5 says `deal` fails.
 
 **Verify:** compiles; red against the stubs under `SEPOLIA_RPC_URL=… FOUNDRY_PROFILE=fork forge test`; plain `forge test` skips `test/fork/`.
 
 ### M1 — Contract merge + triage (main session; user decides spec gaps)
+
+> **Status:** ✅ **Completed** 2026-10-30. Merged (`28246ae`): 154 unit and 11 fork tests pass, 100% coverage of `src/`, 0 impl bugs, 0 test bugs. The 3 spec gaps were approved as spec amendments (§3.5 event order and permissive-fallback tokens, §3.9 stray tokens); see [`test-lane-findings.md`](test-lane-findings.md).
 
 As Tempo M1:
 1. Merge the test branch into the contract branch.
@@ -236,12 +248,16 @@ As Tempo M1:
 
 ### C5 — Sepolia deploy (user broadcasts)
 
-- Claude gives the exact command (spec §7): `forge script script/Deploy.s.sol --rpc-url $SEPOLIA_RPC_URL --account sepolia-deployer --broadcast --verify --verifier sourcify` (no API key).
+> **Status:** ✅ **Completed** 2026-11-03. Factory `0x58B4989074B20af8331C048D7535c70f534299d4`, implementation `0x1619ba96564c733204173cC201f1B9D3Ab9280d1`, block 12056811 (tx `0xfabc9f04…cb7e4`, 9,772,354 gas). Both verified on Sourcify (`exact_match`); `implementation()` returns the implementation. The first two broadcasts ran out of gas: forge's local simulation (about 1.4M gas) underestimates what Sepolia charges to store contract code (about 9.8M), so the command now has `--gas-estimate-multiplier 800`.
+
+- Claude gives the exact command (spec §7): `forge script script/Deploy.s.sol --rpc-url $SEPOLIA_RPC_URL --account sepolia-deployer --broadcast --verify --verifier sourcify --gas-estimate-multiplier 800` (no API key).
 - Write `ethereum/contracts/deployments/sepolia.json` with `{ factory, implementation, deployBlock }`.
 
 **Verify:** both contracts verified on Sourcify (and shown as verified on Sepolia Etherscan); `cast call <factory> "implementation()(address)"` returns the implementation.
 
 ### F1 — Frontend scaffold (frontend agent)
+
+> **Status:** ✅ **Completed** 2026-10-30 on branch `ethereum-frontend`. `pnpm install` (wagmi 3.7.7, viem 2.57.7) and `sync-abi` pass.
 
 - Copy `tempo/frontend/` to `ethereum/frontend/`, without `node_modules`, `dist`, `.env`, `src/abi/*`, and **without any `*.test.ts`** (those belong to agent B).
 - Don't copy `lib/mpp.ts` and `hooks/useMppPay.ts`. Remove `accounts` and `mppx` from `package.json`; rename the package `invoice-discount-ethereum`.
@@ -251,6 +267,8 @@ As Tempo M1:
 **Verify:** `corepack pnpm install` and `sync-abi` succeed. The build doesn't have to pass yet.
 
 ### F2 — Frontend lib freeze (frontend agent)
+
+> **Status:** ✅ **Completed** 2026-10-30, tag `ethereum-frontend-interface-v1` (`b9114d2`). `src/lib/` + `config.ts` type-check (with `noUnusedParameters` off for the stubs); every export has TSDoc. Agent decisions: `upcomingCutoff` is strict at both ends (`now < cutoff`, `cutoff - now < window`); `friendlyError` detects viem `InsufficientFundsError` in the cause chain or `/insufficient funds/i`; history `created` entry has no `invoiceRef`; `config.ts` adds `RPC_URL` and `ETH_FAUCET_URL`.
 
 The frontend's black-box boundary is `src/lib/`. These are the pure modules the Tempo Vitest suites test; hooks and pages aren't unit-tested, as on Tempo.
 - For **every** file in `src/lib/`: final exported types, constants and function signatures, TSDoc on each export (inputs, outputs, edge cases), and bodies that `throw new Error('unimplemented')`. That includes the unchanged files, so agent B sees no implementation at all.
@@ -265,6 +283,8 @@ The frontend's black-box boundary is `src/lib/`. These are the pure modules the 
 
 ### F3 — Config + wallet / tx layer (frontend agent)
 
+> **Status:** ✅ **Completed** 2026-10-30 (code; `8b1020e` on `ethereum-frontend`). ⏳ Browser check still to do (connect, switch chain, disconnect, `wallet_getCapabilities` result, no-ETH error). Batch path uses the `sendCalls` / `waitForCallsStatus` actions rather than the hooks, so one async `run` can await them.
+
 - Delete `useWalletMode.ts`. `useInvoiceWrite`: `writeContract` + `waitForTransactionReceipt`, with no `feePayer` or `*Sync` actions; exposes pending, tx hash, success and error (via `friendlyError`).
 - `useFund`: `useCapabilities` → `fundPath`. `batch` → `useSendCalls` with `[approve, fund]` and `forceAtomic: true`, waited with `useWaitForCallsStatus`. `sequential` → `approve`, wait, `fund`.
 - `ConnectButton`: injected only; "Switch to Sepolia" when on another chain; Sepolia ETH note with faucet link.
@@ -273,12 +293,16 @@ The frontend's black-box boundary is `src/lib/`. These are the pure modules the 
 
 ### F4 — lib/ implementations (frontend agent, in parallel with F3)
 
+> **Status:** ✅ **Completed** 2026-10-30. Exported declarations identical to the tag (`.d.ts` diff: import syntax only).
+
 - Restore the bodies of the unchanged modules verbatim from `tempo/frontend/src/lib/`.
 - Port `actions.ts`, `history.ts` and `logs.ts` per the reuse map. Implement `fundPath`, `upcomingCutoff` and `friendlyError` to their TSDoc.
 
 **Verify:** `tsc --noEmit`; exports identical to `ethereum-frontend-interface-v1` (diff of the `.d.ts` output from `tsc --declaration --emitDeclarationOnly`).
 
 ### F5 — Pages (frontend agent)
+
+> **Status:** ✅ **Completed** 2026-10-30. `corepack pnpm build` and `lint` pass. Browser checks in I1.
 
 Port `Home`, `CreateInvoice` and `InvoiceDetail` per spec §5.3:
 - Home: single connect button, ETH note.
@@ -289,6 +313,8 @@ Port `Home`, `CreateInvoice` and `InvoiceDetail` per spec §5.3:
 
 ### U1 — Vitest suites, ported + new (Sonnet agent B)
 
+> **Status:** ✅ **Completed** 2026-10-30, branch `ethereum-frontend-tests`. 165 tests (~55 ported, ~110 new); 150 red against the stubs, 15 green (config and constants, justified in `frontend/SPEC_QUESTIONS.md`). 4 spec questions.
+
 - Port `lib.test.ts`, `logs.test.ts`, `history.test.ts`, `historyCache.test.ts`, `actions.test.ts` and `config.test.ts` from `tempo/frontend/src/` to the frozen signatures. Drop the MPP cases; history fixtures use ERC-20 `Transfer` and `invoiceRef`.
 - New tests: `fundPath` for every capability status; `upcomingCutoff` (no tiers, cutoff inside/outside/exactly at the window edge, past cutoffs); `friendlyError` for viem's insufficient-funds error and a pass-through; `toUnits`/`fromUnits` at 18 decimals; `visibleActions` for every role × status × before/after due date × clone balance.
 - Ambiguities go in `frontend/SPEC_QUESTIONS.md`.
@@ -297,6 +323,8 @@ Port `Home`, `CreateInvoice` and `InvoiceDetail` per spec §5.3:
 
 ### M2 — Frontend merge + triage (main session)
 
+> **Status:** ✅ **Completed** 2026-10-30 (`670c90a`). Test (165), build and lint pass. 2 impl bugs and 1 test bug fixed by their owners; frontend spec gap 7 is waiting on the user together with M1's. See [`test-lane-findings.md`](test-lane-findings.md).
+
 1. Merge the frontend branch and the frontend test branch; run `corepack pnpm sync-abi` against the M1 contracts.
 2. `corepack pnpm test`, `build`, `lint`.
 3. Triage as M1 (impl bug → frontend agent; test bug → agent B; spec gap → user), logged in the same `test-lane-findings.md`.
@@ -304,6 +332,8 @@ Port `Home`, `CreateInvoice` and `InvoiceDetail` per spec §5.3:
 **Verify:** test, build and lint all pass; the findings log has a frontend section.
 
 ### I1 — End-to-end on Sepolia (main session + user)
+
+> **Status:** ✅ **Signed off by the user** 2026-11-03 on a happy-path run (checklist: [`e2e-checklist.md`](../e2e-checklist.md)). One PYUSD invoice `0x2814a70fd45740cc23ff519e66e546804fb9201c` was created (`0x14b820e1…a3a7`), funded by a plain MetaMask account on the two-transaction path (`0x18298be8…028f`), and paid in its only tier, 10%: 9.00 to the seller (no payout address set) and 1.00 to the buyer (`0x33a9cbc4…028f`). `invoiceRef` is on `Funded` and `Paid`. **Not run on Sepolia:** cancel paths, `settleDirect` (Finish settlement and Accept and settle), a tier change, the USDC repeat, the batched fund path, and the recorded `wallet_getCapabilities` result. The unit and fork suites cover the contract side of these.
 
 `ethereum/docs/e2e-checklist.md`, ported from `tempo/docs/e2e-checklist.md`. Use tier cutoffs **minutes** apart. `.env` gets the C5 addresses.
 1. Seller creates a PYUSD invoice with a payout address. A duplicate reference is blocked.
@@ -317,6 +347,8 @@ Port `Home`, `CreateInvoice` and `InvoiceDetail` per spec §5.3:
 **Verify:** every item ticked, with tx hashes recorded.
 
 ### D1 — Docs
+
+> **Status:** ✅ **Completed** 2026-11-03. From a fresh clone: submodule init, `forge test` (154 pass), `corepack pnpm install`, `test` (165 pass) and `dev` (page returns 200) all work as written in `CLAUDE.md`.
 
 - Root `CLAUDE.md`: an Ethereum section with the build, test, fork, deploy and frontend commands, matching the Tempo section's format.
 - Spec status → implemented; link the findings summary.

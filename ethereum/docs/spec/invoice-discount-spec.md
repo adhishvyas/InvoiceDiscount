@@ -1,6 +1,6 @@
 # InvoiceDiscount on Ethereum: Specification
 
-> Status: draft, October 2026. Not yet planned or implemented. This is a port of the Tempo implementation: the base spec ([`../../../tempo/docs/spec/invoice-discount-spec.md`](../../../tempo/docs/spec/invoice-discount-spec.md), "Tempo base") plus the `settleDirect()` contract function and its frontend actions from the MPP spec ([`../../../tempo/docs/spec/mpp-pay-now-spec.md`](../../../tempo/docs/spec/mpp-pay-now-spec.md), "Tempo MPP"). The MPP server is not ported. The Mesh Pay now spec ([`mesh-pay-now-spec.md`](mesh-pay-now-spec.md)) builds on this one.
+> Status: implemented, November 2026. Deployed on Sepolia (`contracts/deployments/sepolia.json`); test findings summarised in [`../plan/test-lane-findings.md`](../plan/test-lane-findings.md); end-to-end run in [`../e2e-checklist.md`](../e2e-checklist.md). This is a port of the Tempo implementation: the base spec ([`../../../tempo/docs/spec/invoice-discount-spec.md`](../../../tempo/docs/spec/invoice-discount-spec.md), "Tempo base") plus the `settleDirect()` contract function and its frontend actions from the MPP spec ([`../../../tempo/docs/spec/mpp-pay-now-spec.md`](../../../tempo/docs/spec/mpp-pay-now-spec.md), "Tempo MPP"). The MPP server is not ported. The Mesh Pay now spec ([`mesh-pay-now-spec.md`](mesh-pay-now-spec.md)) builds on this one.
 
 ---
 
@@ -135,7 +135,7 @@ event InvoiceCreated(
 
 ### 3.5 InvoiceEscrow functions
 
-All token calls use `SafeERC20` (`safeTransfer`, `safeTransferFrom`). Every state change happens before the token call (checks-effects-interactions), so a token that calls back into the escrow (e.g. an ERC-777-style hook) finds the status already updated. No reentrancy guard is needed.
+All token calls use `SafeERC20` (`safeTransfer`, `safeTransferFrom`). Every state change happens before the token call (checks-effects-interactions), so a token that calls back into the escrow (e.g. an ERC-777-style hook) finds the status already updated. No reentrancy guard is needed. Each function emits its event last, after its token calls, so in a transaction's logs the token's `Transfer` events come before the escrow event.
 
 #### `initialize(address seller, bytes32 invoiceRef, address token, uint128 principal, uint64 dueDate, DiscountTier[] tiers, address payoutAddress)`
 
@@ -146,7 +146,7 @@ As Tempo base §3.5: callable once (`AlreadyInitialized`) and only by the factor
 - `dueDate > block.timestamp` → `DueDateNotInFuture`
 - `tiers.length <= 10` → `TooManyTiers`
 - per tier, in one pass: `cutoff > previousCutoff` (first > 0) → `TiersNotAscending`; `cutoff <= dueDate` → `TierAfterDueDate`; `discountBps <= 10_000` → `DiscountTooLarge`
-- **`token.code.length > 0` → `InvalidToken`** (replaces `NotTIP20`). This rejects an EOA or an empty address. It does not prove the contract is an ERC-20; a non-ERC-20 contract makes `fund` revert, so no funds can be locked against it.
+- **`token.code.length > 0` → `InvalidToken`** (replaces `NotTIP20`). This rejects an EOA or an empty address. It does not prove the contract is an ERC-20. A contract without `transferFrom` usually makes `fund` revert, but one whose `fallback` accepts any call and returns no data passes `SafeERC20`, so `fund` marks the invoice Funded with no tokens moved (§3.9).
 
 Stores `payoutAddress` only if non-zero and different from `seller`. Sets `status = Active`. Zero tiers is allowed. Past cutoffs, zero-discount tiers and non-monotonic discounts are accepted, as on Tempo.
 
@@ -248,7 +248,8 @@ Every escrow event carries `invoiceRef = "INV-2026-0042"`.
 - **Issuer seizure:** PYUSD's and USDG's issuer can wipe a frozen address's balance (`wipeFrozenAddress`), including an escrow's. A trust assumption about the issuer, like TIP-20's `burnAt`.
 - **Fee-on-transfer and rebasing tokens are unsupported.** The contract assumes a transfer of `principal` delivers exactly `principal`. With a fee-on-transfer token, the escrow holds less than `principal` after `fund`, and `triggerPayment` and `cancel` then revert, so the funds are stuck. A rebasing token changes the balance under the escrow. The frontend's token list contains neither kind; a seller calling the factory directly can still pick one.
 - **Tokens that revert on zero-amount transfers** can't settle an invoice with a 100% discount through `triggerPayment`.
-- **Stray transfers into a non-Active clone** (Funded, Paid or Cancelled) stay there. No rescue path, as on Tempo.
+- **Non-ERC-20 contracts with a permissive `fallback`** pass the `InvalidToken` check, and `SafeERC20` accepts their empty return data, so `fund` succeeds with no tokens moved: the invoice shows Funded with nothing in escrow. The frontend's token list prevents this; a seller calling the factory directly can still pick such a contract.
+- **Stray transfers into a clone** stay there unless `settleDirect` takes them. `settleDirect` pays out an Active clone's whole balance, but once the clone is funded through `fund`, `triggerPayment` and `cancel` move `principal` only, so tokens sent before or after funding (or into a Paid or Cancelled clone) stay in it. No rescue path, as on Tempo.
 
 ---
 
@@ -315,7 +316,7 @@ Same routes and behaviour as Tempo base §4.3, with these changes:
 | Fund | connected, not seller, `status == Active` | Optional refund address input. Path from §5.2 |
 | Trigger payment | `status == Funded`, user is seller or buyer | `invoice.triggerPayment()` |
 | Cancel | seller (Active/Funded), or buyer with `now > dueDate` (Funded) | `invoice.cancel()` |
-| Finish settlement | `status == Active` and clone balance ≥ amount due now | `invoice.settleDirect()`. Anyone connected may click it |
+| Finish settlement | `status == Active`, clone balance ≥ amount due now, and balance > 0 | `invoice.settleDirect()`. Anyone connected may click it |
 | Accept and settle | seller, `status == Active`, 0 < clone balance < amount due now | Warns "You will receive X instead of Y", then `invoice.settleDirect()` |
 
 "Amount due now" is `principal − floor(principal × activeDiscount(now) / 10_000)`, with `activeDiscount` read from the contract.
@@ -341,7 +342,7 @@ Same suite as Tempo base §5 and Tempo MPP §6.1, run with a plain `forge test` 
 
 - **Unit tests (`test/unit/`):** a `MockERC20` in `test/` (OpenZeppelin `ERC20`, 6 decimals, public `mint`). Tests use `deal` or `mint` to fund actors.
 - **Fork tests (`test/fork/`):** run against Sepolia (`SEPOLIA_RPC_URL=… FOUNDRY_PROFILE=fork forge test`) with the real PYUSD and USDC contracts. Fund actors with `deal(token, actor, amount)`, which works on both proxies ([`verification-notes.md`](verification-notes.md) item 5).
-- **Smoke tests (`test/smoke/`):** the contract author's own minimal checks.
+- **No smoke tests:** all tests are written by the black-box test lane, so the contract author's `test/smoke/` from Tempo was dropped.
 
 Changes to the Tempo test list:
 
@@ -367,7 +368,7 @@ ethereum/
   contracts/                 # Foundry project
     src/InvoiceEscrow.sol
     src/InvoiceFactory.sol
-    test/unit/  test/fork/  test/smoke/
+    test/unit/  test/fork/  test/mocks/
     script/Deploy.s.sol      # deploys the factory (which deploys the implementation)
     deployments/sepolia.json # factory, implementation, deploy block
   frontend/                  # Vite + React + wagmi, copied from tempo/frontend
@@ -377,11 +378,11 @@ ethereum/
 ```
 
 - Build / test: `forge build`, `forge test -vvv`. Fork suite: `SEPOLIA_RPC_URL=<url> FOUNDRY_PROFILE=fork forge test -vvv`.
-- Deploy (the user broadcasts): `forge script script/Deploy.s.sol --rpc-url $SEPOLIA_RPC_URL --account sepolia-deployer --broadcast --verify --verifier sourcify`. No API key is needed. The deployer needs Sepolia ETH.
+- Deploy (the user broadcasts): `forge script script/Deploy.s.sol --rpc-url $SEPOLIA_RPC_URL --account sepolia-deployer --broadcast --verify --verifier sourcify --gas-estimate-multiplier 800`. No API key is needed. The deployer needs Sepolia ETH. The multiplier is needed because Sepolia charges about 7× more gas to store contract code than forge 1.8.5's local simulation (the factory deploy uses about 9.8M gas); without it the deploy runs out of gas.
 - Frontend: `corepack pnpm dev | build | lint | test`, and `corepack pnpm sync-abi` after a contract change (frontend ABIs only).
 - Testnet funds: Sepolia ETH from a faucet; PYUSD and USDC from the faucets in §5.1.
 
-When this is scaffolded, add an Ethereum section to the root `CLAUDE.md` with these commands.
+These commands are also in the Ethereum section of the root `CLAUDE.md`.
 
 ---
 

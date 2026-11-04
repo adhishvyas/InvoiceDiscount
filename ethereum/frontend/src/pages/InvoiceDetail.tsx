@@ -224,14 +224,14 @@ function CutoffWarning({ cutoff }: { cutoff: bigint | undefined }) {
   );
 }
 
-/** The Mesh session's progress after the transfer was submitted in Mesh Link (Mesh spec §5). */
+/** The Mesh session's progress once Mesh Link has closed (Mesh spec §5; Link doesn't say whether the buyer paid). */
 function MeshProgress({ session, onRetry }: { session: SessionView | undefined; onRetry: () => void }) {
   switch (session?.state) {
     case undefined:
     case 'awaiting-transfer':
-      return <p className="text-sm text-slate-400 mt-3">Payment submitted. Waiting for Mesh to confirm the transfer…</p>;
+      return <p className="text-sm text-slate-400 mt-3">Mesh closed. Checking for your payment…</p>;
     case 'pending':
-      return <p className="text-sm text-slate-400 mt-3">Payment submitted. Mesh reports the transfer as pending…</p>;
+      return <p className="text-sm text-slate-400 mt-3">Mesh reports the transfer as pending…</p>;
     case 'succeeded':
       return <p className="text-sm text-slate-400 mt-3">Transfer received. Settling the invoice…</p>;
     case 'settled':
@@ -267,13 +267,13 @@ function MeshProgress({ session, onRetry }: { session: SessionView | undefined; 
 /** "Paid via Mesh" from the invoice's latest session, while mesh-server still holds it. */
 function PaidViaMesh({ session }: { session: SessionView | undefined }) {
   if (!session || !['succeeded', 'settled', 'needs-attention'].includes(session.state)) return null;
-  const { provider, refundAddress } = session.payer ?? {};
+  const { provider, sourceAddress } = session.payer ?? {};
   return (
     <p className="text-xs text-slate-500 py-2">
       Paid via Mesh{provider && <> from {provider}</>}
-      {refundAddress && (
+      {sourceAddress && (
         <>
-          ; refund address <span className="font-mono break-all">{refundAddress}</span>
+          ; sent by <span className="font-mono break-all">{sourceAddress}</span>
         </>
       )}
       .
@@ -498,6 +498,7 @@ function Invoice({ invoice }: { invoice: Address }) {
           {(mesh.state.status === 'idle' || mesh.state.status === 'starting') && (
             <>
               <p className="text-sm text-slate-400">Pay from an exchange account or wallet through Mesh. No wallet connection needed.</p>
+              {mesh.state.status === 'idle' && mesh.state.note && <p className="text-sm text-amber-300 mt-2">{mesh.state.note}</p>}
               <button
                 onClick={() => void mesh.start(invoice)}
                 disabled={mesh.state.status === 'starting'}
@@ -545,7 +546,7 @@ function Invoice({ invoice }: { invoice: Address }) {
               </div>
             </div>
           )}
-          {mesh.state.status === 'submitted' && <MeshProgress session={mesh.session} onRetry={() => void mesh.start(invoice)} />}
+          {mesh.state.status === 'polling' && <MeshProgress session={mesh.session} onRetry={() => void mesh.start(invoice)} />}
           {mesh.state.status === 'error' && (
             <p className="text-sm text-red-400 mt-3">
               {mesh.state.message}{' '}

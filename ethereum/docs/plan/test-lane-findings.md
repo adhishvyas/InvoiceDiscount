@@ -132,3 +132,54 @@ No **impl bugs**.
 
 - Impl bugs: 0. Test bugs: 2 (4 tests). Spec gaps: 6, of which 2 are proposed wording changes (findings 14, 15).
 - Ported vs new tests: the ~13 ported quote and clone-check tests all passed first time, as expected for code copied from `mpp-server`. All 4 failures were in new HTTP-layer tests, from fixture setup and a JavaScript default-parameter trap, not from behaviour.
+
+## Mesh pay-now: mesh-server v2 (node M3 of [`mesh-pay-now-dag.md`](mesh-pay-now-dag.md#mesh-pay-v2-change-after-s1))
+
+> 2026-11-03. After the Mesh spike found the v2 API, the interface was re-frozen at `ethereum-mesh-server-interface-v2` (`94d2a22`), **built on the v1 stub lineage** so the test agent again saw only stubs. Tests: Sonnet 5.5 (agent A), `7db0e55` on `ethereum-mesh-server-tests`. Implementation: Opus, main session, V7 (`50012ce`). Merge `M3` below.
+
+### Result
+
+| Check | First run after merge |
+|---|---|
+| `corepack pnpm test` (288 tests: 84 kept, ~116 rewritten, ~88 new, 4 removed) | all pass |
+| `corepack pnpm typecheck` | passes |
+| Coverage (as M1) | lines 99.1%: `app.ts` 98.2%, `webhook.ts` 98.6%, `mesh.ts` 100% (branches 85.7%) |
+
+Red check (test author): 283 of 288 failed against the v2 stubs; the 5 green ones are `fakeChain.test.ts` self-tests. Live checks before the merge (main session): the real `createMeshClient` minted one OAuth token for two sandbox sessions, and a wrong secret gave `MeshApiError` 401; `verifyMeshSignature` passes Mesh's published test vector. Isolation: agent A's file list contains the docs, the v2 stubs and its own tests only.
+
+### Findings
+
+| # | Test | Classification | Resolution |
+|---|---|---|---|
+| 19 | SPEC-QUESTION 8: `completed` with no `source` | **spec gap** (none needed) | Payer left empty, settlement proceeds. No change |
+| 20 | SPEC-QUESTIONS 9, 10, 13: exact token-cache boundary; `audience` with a port; `previous_status` ignored, any 2xx accepted | **spec gap** (none needed) | Mesh hosts have no port (implementation uses `URL.host`); the boundary second is immaterial. No change |
+| 21 | SPEC-QUESTION 11: both destination and network mismatch | **spec gap** (none needed) | The implementation reports `destination mismatch` (checked first). No change |
+| 22 | SPEC-QUESTION 12: non-Mesh token with no symbol in the webhook passes the "when present" check | **spec gap** (none needed) | It can only settle a clone that already holds the full amount due, which is correct (the chain decides); the symbol check is a guard, not the gate. No change |
+
+No **impl bugs** and no **test bugs**. (v1 questions 2 and 3 are resolved by the v2 TSDoc; 1, 4 and 5 stand as logged in M1.)
+
+## Mesh pay-now: frontend v2 (node M4)
+
+> 2026-11-03. F5 by the Opus frontend agent: `9fe08ee` (lib types only, tag `ethereum-frontend-interface-v3`) and `ac43e1d` (SDK swap). Merge `f3624bd`. No test-agent run: the lib change is type-only (plan F5).
+
+| Check | Result |
+|---|---|
+| `corepack pnpm test` | 186 pass |
+| `corepack pnpm build`, `lint` | pass |
+
+Notes: `@meshpayhq/link-web-sdk` **0.0.10**, `openLink(token, clientId, options): LinkHandle`. `onExit` receives `{ status: 'success' | 'canceled' }`, but `canceled` also covers closing Link after paying, so the hook polls on either and ignores `status` (spec §5). A session still `awaiting-transfer` after `expiresAt` stops polling ("No payment arrived before the quote expired."). `handle.close()` on unmount (new; F3 didn't close Link).
+
+## Native ETH: mesh-server (node M3 of [`native-eth-dag.md`](native-eth-dag.md))
+
+> 2026-11-03. V2 implementation `822d7e1`; T2 by Sonnet agent C on tag `ethereum-mesh-server-interface-v3`, `3d1053c` (27 new tests, `fakeChain` serves `eth_getBalance` and records ERC-20 calls). Red check against the stubs: 309 failed, 6 passed (5 existing `fakeChain` tests, plus the `NATIVE_TOKEN` constant).
+
+| Check | Result |
+|---|---|
+| `corepack pnpm test` | 315 pass (after finding 23) |
+| `corepack pnpm typecheck` | pass |
+
+| # | Finding | Kind | Resolution |
+|---|---|---|---|
+| 23 | `native.test.ts` expected `settle` to be called with the lowercase clone address | **test bug** | `decodeTransactionId` documents a checksummed `invoice`, and the existing suite asserts `getAddress(CLONE)`. Test fixed to match |
+| 24 | SPEC-QUESTIONS 14–18: case-insensitive native token, block tag of `eth_getBalance`, `meshTokens` keyed by the zero address, case-sensitive symbol (`eth` ≠ `ETH`), no symbol on an ETH event settles | **spec gap** (none needed) | All match the TSDoc and the implementation. No change |
+| 25 | SPEC-QUESTIONS 19–20: env parsing untested (outside the freeze); webhook tests depend on the `SessionStore.create` stub for red | **spec gap** (none needed) | No change |

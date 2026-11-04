@@ -1,4 +1,4 @@
-import { Status, type StatusValue } from './status';
+import type { StatusValue } from './status';
 
 /** What the invoice page knows when it decides which buttons to show. */
 export interface ActionContext {
@@ -11,12 +11,14 @@ export interface ActionContext {
   dueDate: bigint;
   /** Current unix seconds. */
   now: bigint;
-  /** The invoice's own token balance (direct payments sent to it). */
+  /** The invoice's own balance of its token (direct payments sent to it); its ETH balance for an ETH invoice. */
   cloneBalance: bigint;
   /** What `settleDirect()` requires now: the principal less the current discount. */
   dueNow: bigint;
   /** `MESH_SERVER_URL` is set and the invoice token is in `MESH_TOKENS`; computed by the page. */
   meshSupported: boolean;
+  /** The connected account's ETH credit on this invoice (`owed(account)`); 0n with no account or on an ERC-20 invoice. */
+  owed: bigint;
 }
 
 /** One flag per action button on the invoice page. */
@@ -27,9 +29,8 @@ export interface VisibleActions {
   finishSettlement: boolean;
   acceptAndSettle: boolean;
   payWithMesh: boolean;
+  withdraw: boolean;
 }
-
-const same = (a: string | undefined, b: string): boolean => a !== undefined && a.toLowerCase() === b.toLowerCase();
 
 /**
  * Which actions to offer on the invoice page (spec §5.3). The contract has the final say.
@@ -42,20 +43,8 @@ const same = (a: string | undefined, b: string): boolean => a !== undefined && a
  * - `acceptAndSettle`: the seller, Active, and `0 < cloneBalance < dueNow`.
  * - `payWithMesh` (Mesh spec §5): `meshSupported`, Active, `cloneBalance < dueNow`, and the account isn't the seller.
  *   No account connected counts as not the seller, so this is the one flag that can be true with no account.
+ * - `withdraw` (native-ETH spec §4): connected and `owed > 0n`, in any status and whoever the account is.
  */
 export function visibleActions(ctx: ActionContext): VisibleActions {
-  const connected = ctx.account !== undefined;
-  const isSeller = same(ctx.account, ctx.seller);
-  const isBuyer = ctx.status !== Status.Active && same(ctx.account, ctx.buyer);
-  const active = ctx.status === Status.Active;
-  const open = active || ctx.status === Status.Funded;
-  const paidInFull = ctx.cloneBalance > 0n && ctx.cloneBalance >= ctx.dueNow;
-  return {
-    fund: connected && !isSeller && active,
-    trigger: ctx.status === Status.Funded && (isSeller || isBuyer),
-    cancel: open && (isSeller || (isBuyer && ctx.now > ctx.dueDate)),
-    finishSettlement: connected && active && paidInFull,
-    acceptAndSettle: isSeller && active && ctx.cloneBalance > 0n && ctx.cloneBalance < ctx.dueNow,
-    payWithMesh: ctx.meshSupported && active && ctx.cloneBalance < ctx.dueNow && !isSeller,
-  };
+  throw new Error('unimplemented');
 }

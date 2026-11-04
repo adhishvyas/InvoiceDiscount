@@ -1,6 +1,6 @@
-// INTERFACE FREEZE (tag ethereum-mesh-server-interface-v2): exported names, signatures and documented behaviour.
+// INTERFACE FREEZE (tag ethereum-mesh-server-interface-v3): exported names, signatures and documented behaviour.
 import { concat, erc20Abi, getAddress, type Address, type Client, type ContractFunctionReturnType, type Hex } from 'viem';
-import { getBlock, getCode, readContract } from 'viem/actions';
+import { getBalance, getBlock, getCode, readContract } from 'viem/actions';
 import { invoiceEscrowAbi } from './abi/InvoiceEscrow';
 import { invoiceFactoryAbi } from './abi/InvoiceFactory';
 import { quoteAmount } from './quote';
@@ -60,7 +60,22 @@ export async function dueNow(client: Client, address: Address, invoice: Invoice)
   return quoteAmount(invoice.principal, bps);
 }
 
-/** ERC-20 `balanceOf(holder)` on `token`. */
+/** `token` meaning native ETH (an ETH invoice's `getInvoice().token`, native-ETH spec §2). */
+export const NATIVE_TOKEN: Address = '0x0000000000000000000000000000000000000000';
+
+const isNative = (token: Address) => token.toLowerCase() === NATIVE_TOKEN;
+
+/**
+ * `holder`'s balance of `token`: for `NATIVE_TOKEN`, the ETH balance (`eth_getBalance` at the latest block);
+ * otherwise ERC-20 `balanceOf(holder)` on `token`. Addresses compare case-insensitively.
+ */
 export async function tokenBalance(client: Client, token: Address, holder: Address): Promise<bigint> {
+  if (isNative(token)) return getBalance(client, { address: holder });
   return readContract(client, { address: token, abi: erc20Abi, functionName: 'balanceOf', args: [holder] });
+}
+
+/** Decimals of `token`: 18 for `NATIVE_TOKEN` (no chain call), otherwise ERC-20 `decimals()` on `token`. */
+export async function tokenDecimals(client: Client, token: Address): Promise<number> {
+  if (isNative(token)) return 18;
+  return readContract(client, { address: token, abi: erc20Abi, functionName: 'decimals' });
 }

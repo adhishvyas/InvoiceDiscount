@@ -142,9 +142,13 @@ ETH spec §6, frontend items; the existing suites are updated for the new `Actio
 
 On a branch from `ethereum-mesh-server-interface-v2` (stubs): `invoice.ts` `tokenBalance` TSDoc (native), new `tokenDecimals`; `app.ts` TSDoc (`decimals` via `tokenDecimals`); `.env.example` (`MESH_TOKENS` with ETH). Tag `ethereum-mesh-server-interface-v3`; launch agent C.
 
+**Status:** done 2026-11-03, tag `ethereum-mesh-server-interface-v3` (branch `ethereum-eth-server-freeze`, from `-v2` stubs plus agent A's suite, `fakeChain.ts`, the synced v2 ABI and the current docs). Adds `NATIVE_TOKEN` and `tokenDecimals`; `tokenBalance` reads `eth_getBalance` for native; TSDoc in `app.ts` step 5 and `webhook.ts` step e.
+
 ### V2 — Server implementation (main session)
 
 **Verify:** typecheck; declarations identical to the tag; live: a sandbox session for an ETH clone on the new factory (after C3).
+
+**Status:** code done 2026-11-03: typecheck passes; declarations match the tag apart from import style and private fields; the existing 288 tests pass. The live check waits for C3.
 
 ### T2 — Server tests, red (Sonnet agent C)
 

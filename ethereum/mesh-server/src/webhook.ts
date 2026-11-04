@@ -1,4 +1,4 @@
-// INTERFACE FREEZE (tag ethereum-mesh-server-interface-v2): exported names, signatures and documented behaviour.
+// INTERFACE FREEZE (tag ethereum-mesh-server-interface-v3): exported names, signatures and documented behaviour.
 import { BaseError, ContractFunctionRevertedError, getAddress, type Address, type Client, type Hash } from 'viem';
 import { waitForTransactionReceipt } from 'viem/actions';
 import { decodeTransactionId } from './ids';
@@ -92,7 +92,7 @@ export interface WebhookContext {
  *         `needs-attention`, reason `token mismatch`. (A token not in `meshTokens` with a symbol present is a mismatch.)
  *      d. Status Paid → `needs-attention`, reason `already Paid`; Funded or Cancelled → `needs-attention`, reason
  *         `invoice is Funded` / `invoice is Cancelled`. No settle.
- *      e. `balance = tokenBalance(invoice.token, invoice)`, `due = dueNow(...)`. Unless `balance > 0n && balance >= due`:
+ *      e. `balance = tokenBalance(invoice.token, invoice)` (the ETH balance for an ETH invoice), `due = dueNow(...)`. Unless `balance > 0n && balance >= due`:
  *         `needs-attention`, reason `insufficient balance: <balance> < <due>` (base units), no settle.
  *      f. `settle(invoice)`, then wait for that tx's receipt (no timeout). Success → `settled` with `settleTx`.
  *         Reverted receipt → `needs-attention` with `settleTx` and reason `settleDirect reverted`.

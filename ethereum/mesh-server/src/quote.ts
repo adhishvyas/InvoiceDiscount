@@ -1,4 +1,4 @@
-// INTERFACE FREEZE (tag ethereum-mesh-server-interface-v2): exported names, signatures and documented behaviour.
+// INTERFACE FREEZE (tag ethereum-mesh-server-interface-v3): exported names, signatures and documented behaviour.
 
 /** The quote's own life (600 s) plus 300 s for the transfer to land and `settleDirect()` to be included (Mesh spec §4.2). */
 export const QUOTE_WINDOW = 900n;

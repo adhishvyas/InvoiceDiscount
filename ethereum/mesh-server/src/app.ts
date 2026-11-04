@@ -1,11 +1,11 @@
-// INTERFACE FREEZE (tag ethereum-mesh-server-interface-v2): exported names, signatures and documented behaviour.
+// INTERFACE FREEZE (tag ethereum-mesh-server-interface-v3): exported names, signatures and documented behaviour.
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
-import { erc20Abi, formatUnits, getAddress, isAddress, type Address, type Client, type Hash } from 'viem';
+import { formatUnits, getAddress, isAddress, type Address, type Client, type Hash } from 'viem';
 import { getBlock, readContract } from 'viem/actions';
 import { invoiceEscrowAbi } from './abi/InvoiceEscrow';
 import { encodeTransactionId, newSessionId } from './ids';
-import { isClone, readInvoice, Status, STATUS_NAME, tokenBalance } from './invoice';
+import { isClone, readInvoice, Status, STATUS_NAME, tokenBalance, tokenDecimals } from './invoice';
 import { createMeshClient, MeshApiError, type MeshApiConfig, type MeshSession } from './mesh';
 import { quoteAmount, quoteBps, QUOTE_WINDOW } from './quote';
 import { SessionStore, sessionView } from './sessions';
@@ -55,7 +55,9 @@ export interface AppConfig {
  * 4. With `t` = the latest block's timestamp: clone balance `>=` `quoteAmount(principal, activeDiscount(t))` →
  *    `409 { error: "already paid", balance, due }` (decimal strings).
  * 5. Quote: `discountBps = quoteBps(t, tier cutoffs, activeDiscount, QUOTE_WINDOW)`, `amount = quoteAmount(principal, discountBps)`.
- *    `decimals()` is read from the token; `displayAmount = formatUnits(amount, decimals)`.
+ *    `decimals = tokenDecimals(token)` (18 for an ETH invoice, `token == NATIVE_TOKEN`); `displayAmount = formatUnits(amount, decimals)`.
+ *    For an ETH invoice the balance in step 4 is the clone's ETH balance (`tokenBalance`), and `meshTokens` must map
+ *    `NATIVE_TOKEN` (e.g. to `ETH`) for step 3 to pass.
  * 6. For a fresh `id = newSessionId()`: `createPaymentSession` with `invoice` = the checksummed clone, `symbol` =
  *    `meshTokens[token]`, `amount` = `displayAmount`, `networkCaip2`, `clientTransactionId = encodeTransactionId(invoice, id)`,
  *    `userId = "buyer-" + id` and `idempotencyKey = "mesh-session-" + id`. A `MeshApiError` (from the token mint or
@@ -107,7 +109,7 @@ export function createApp(config: AppConfig): {
     const [balance, bpsNow, decimals] = await Promise.all([
       tokenBalance(client, token, address),
       discountAt(t),
-      readContract(client, { address: token, abi: erc20Abi, functionName: 'decimals' }),
+      tokenDecimals(client, token),
     ]);
     const due = quoteAmount(invoice.principal, bpsNow);
     if (balance >= due) return c.json({ error: 'already paid', balance: balance.toString(), due: due.toString() }, 409);

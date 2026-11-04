@@ -1,4 +1,4 @@
-// INTERFACE FREEZE (tag ethereum-mesh-server-interface-v2): exported names, signatures and documented behaviour.
+// INTERFACE FREEZE (tag ethereum-mesh-server-interface-v3): exported names, signatures and documented behaviour.
 import { createHmac, timingSafeEqual } from 'node:crypto';
 
 /** A delivery whose `X-Mesh-Timestamp` is further than this from now is rejected (Mesh's recommended window). */

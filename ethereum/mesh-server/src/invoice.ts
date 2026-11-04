@@ -1,4 +1,4 @@
-// INTERFACE FREEZE (tag ethereum-mesh-server-interface-v2): exported names, signatures and documented behaviour.
+// INTERFACE FREEZE (tag ethereum-mesh-server-interface-v3): exported names, signatures and documented behaviour.
 import type { Address, Client, ContractFunctionReturnType, Hex } from 'viem';
 import type { invoiceEscrowAbi } from './abi/InvoiceEscrow';
 
@@ -40,7 +40,18 @@ export async function dueNow(client: Client, address: Address, invoice: Invoice)
   throw new Error('unimplemented');
 }
 
-/** ERC-20 `balanceOf(holder)` on `token`. */
+/** `token` meaning native ETH (an ETH invoice's `getInvoice().token`, native-ETH spec §2). */
+export const NATIVE_TOKEN: Address = '0x0000000000000000000000000000000000000000';
+
+/**
+ * `holder`'s balance of `token`: for `NATIVE_TOKEN`, the ETH balance (`eth_getBalance` at the latest block);
+ * otherwise ERC-20 `balanceOf(holder)` on `token`. Addresses compare case-insensitively.
+ */
 export async function tokenBalance(client: Client, token: Address, holder: Address): Promise<bigint> {
+  throw new Error('unimplemented');
+}
+
+/** Decimals of `token`: 18 for `NATIVE_TOKEN` (no chain call), otherwise ERC-20 `decimals()` on `token`. */
+export async function tokenDecimals(client: Client, token: Address): Promise<number> {
   throw new Error('unimplemented');
 }

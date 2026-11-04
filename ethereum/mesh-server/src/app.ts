@@ -1,4 +1,4 @@
-// INTERFACE FREEZE (tag ethereum-mesh-server-interface-v2): exported names, signatures and documented behaviour.
+// INTERFACE FREEZE (tag ethereum-mesh-server-interface-v3): exported names, signatures and documented behaviour.
 import type { Hono } from 'hono';
 import type { Address, Client, Hash } from 'viem';
 import type { MeshApiConfig } from './mesh';
@@ -45,7 +45,9 @@ export interface AppConfig {
  * 4. With `t` = the latest block's timestamp: clone balance `>=` `quoteAmount(principal, activeDiscount(t))` →
  *    `409 { error: "already paid", balance, due }` (decimal strings).
  * 5. Quote: `discountBps = quoteBps(t, tier cutoffs, activeDiscount, QUOTE_WINDOW)`, `amount = quoteAmount(principal, discountBps)`.
- *    `decimals()` is read from the token; `displayAmount = formatUnits(amount, decimals)`.
+ *    `decimals = tokenDecimals(token)` (18 for an ETH invoice, `token == NATIVE_TOKEN`); `displayAmount = formatUnits(amount, decimals)`.
+ *    For an ETH invoice the balance in step 4 is the clone's ETH balance (`tokenBalance`), and `meshTokens` must map
+ *    `NATIVE_TOKEN` (e.g. to `ETH`) for step 3 to pass.
  * 6. For a fresh `id = newSessionId()`: `createPaymentSession` with `invoice` = the checksummed clone, `symbol` =
  *    `meshTokens[token]`, `amount` = `displayAmount`, `networkCaip2`, `clientTransactionId = encodeTransactionId(invoice, id)`,
  *    `userId = "buyer-" + id` and `idempotencyKey = "mesh-session-" + id`. A `MeshApiError` (from the token mint or

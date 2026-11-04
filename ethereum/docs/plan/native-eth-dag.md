@@ -114,6 +114,8 @@ Same command as the port (`--gas-estimate-multiplier 800`). Update `contracts/de
 
 **Verify:** both contracts verified on Sourcify; `implementation()` matches; the implementation's code contains the `withdraw(address)` selector.
 
+**Status:** done 2026-11-04: factory `0xaae0256fA649946b444932Db5ff49b10BB0E62D3`, implementation `0xCF5533f21e454Bd8ee560652E8DdE9309D601501`, block 12064098 (tx `0x58051d62…8c9c7e`). Both are `exact_match` on Sourcify; `implementation()` matches; the code contains `withdraw(address)` (`0x51cff8d9`); `fund` on the implementation reverts `NotActive` (§3.8a). `deployments/sepolia.json` keeps the v1 addresses under `previous`; the frontend and mesh-server `.env` point at the new factory, and `MESH_TOKENS` includes ETH.
+
 ### F1 — Frontend lib freeze (frontend agent)
 
 On a branch from `ethereum-frontend-interface-v2` stubs plus the v3 type changes (or from `-v3` with its changed modules stubbed), with the current docs:

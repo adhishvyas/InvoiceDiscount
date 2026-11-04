@@ -102,11 +102,11 @@ Network: Moderato testnet, chain 42431, RPC `https://rpc.moderato.tempo.xyz`, ex
 
 Toolchain: as Tempo (Foundry, pnpm via corepack). After a fresh clone, fetch the contract libraries: `git submodule update --init ethereum/contracts/lib/forge-std ethereum/contracts/lib/openzeppelin-contracts`.
 
-- `ethereum/contracts/`: the Tempo contracts ported to ERC-20 (`SafeERC20`, `InvalidToken` code-size check, `invoiceRef` on the escrow events). The interface is frozen at tag `ethereum-interface-v1`; changing it needs approval and a new tag.
+- `ethereum/contracts/`: the Tempo contracts ported to ERC-20 (`SafeERC20`, `InvalidToken` code-size check, `invoiceRef` on the escrow events), plus native ETH invoices (`token == address(0)`). The interface is frozen at tag `ethereum-interface-v2`; changing it needs approval and a new tag.
   - `forge build`, `forge test` (unit tests; fork tests are excluded)
   - Fork tests: `SEPOLIA_RPC_URL=https://ethereum-sepolia.publicnode.com FOUNDRY_PROFILE=fork forge test`
   - Deploy (the user broadcasts): `forge script script/Deploy.s.sol --rpc-url $SEPOLIA_RPC_URL --account sepolia-deployer --broadcast --verify --verifier sourcify --gas-estimate-multiplier 800`. The multiplier is required (forge underestimates Sepolia's code-storage gas). Addresses go in `deployments/sepolia.json`.
-- `ethereum/frontend/`: React + wagmi, injected wallets (MetaMask). `.env` from `.env.example`, with `VITE_FACTORY_ADDRESS` and `VITE_FACTORY_DEPLOY_BLOCK` from `contracts/deployments/sepolia.json`. `src/lib/` is frozen at tag `ethereum-frontend-interface-v1`.
+- `ethereum/frontend/`: React + wagmi, injected wallets (MetaMask). `.env` from `.env.example`, with `VITE_FACTORY_ADDRESS` and `VITE_FACTORY_DEPLOY_BLOCK` from `contracts/deployments/sepolia.json`. `src/lib/` is frozen at tag `ethereum-frontend-interface-v4`.
   - `corepack pnpm dev` (http://localhost:5173), `build`, `lint`, `test`
   - `corepack pnpm sync-abi`: regenerates `frontend/src/abi/` after a contract change
 
